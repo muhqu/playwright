@@ -247,7 +247,7 @@ var data = new Dictionary<string, object>() {
 await Request.FetchAsync("https://example.com/api/createBook", new() { Method = "post", DataObject = data });
 ```
 
-The common way to send file(s) in the body of a request is to upload them as form fields with `multipart/form-data` encoding. Use [FormData] to construct request body and pass it to the request as [`option: multipart`] parameter:
+The common way to send file(s) in the body of a request is to upload them as form fields with `multipart/form-data` encoding, by specifiying the `multipart` parameter:
 
 ```js
 const form = new FormData();
@@ -299,6 +299,7 @@ var multipart = Context.APIRequest.CreateFormData();
 multipart.Set("fileField", file);
 await Request.FetchAsync("https://example.com/api/uploadScript", new() { Method = "post", Multipart = multipart });
 ```
+
 
 ### param: APIRequestContext.fetch.urlOrRequest
 * since: v1.16
@@ -889,3 +890,9 @@ Returns storage state for this request context, contains current cookies and loc
 
 ### option: APIRequestContext.storageState.path = %%-storagestate-option-path-%%
 * since: v1.16
+
+### option: APIRequestContext.storageState.indexedDB
+* since: v1.51
+- `indexedDB` ?<boolean>
+
+Set to `true` to include IndexedDB in the storage state snapshot.

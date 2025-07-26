@@ -15,22 +15,25 @@
  */
 
 import path from 'path';
-import type { FullConfig, Reporter, TestError } from '../../types/testReporter';
+
 import { InProcessLoaderHost, OutOfProcessLoaderHost } from './loaderHost';
+import { createFileFiltersFromArguments, createFileMatcherFromArguments, createTitleMatcher, errorWithFile, forceRegExp } from '../util';
+import { buildProjectsClosure, collectFilesForProject, filterProjects } from './projectUtils';
+import {  createTestGroups, filterForShard } from './testGroups';
+import { applyRepeatEachIndex, bindFileSuiteToProject, filterByFocusedLine, filterByTestIds, filterOnly, filterTestsRemoveEmptySuites } from '../common/suiteUtils';
 import { Suite } from '../common/test';
-import type { TestCase } from '../common/test';
+import { dependenciesForTestFile } from '../transform/compilationCache';
+import { requireOrImport } from '../transform/transform';
+import { sourceMapSupport } from '../utilsBundle';
+
+import type { TestRun } from './tasks';
+import type { TestGroup } from './testGroups';
+import type { FullConfig, Reporter, TestError } from '../../types/testReporter';
 import type { FullProjectInternal } from '../common/config';
 import type { FullConfigInternal } from '../common/config';
-import { createFileMatcherFromArguments, createFileFiltersFromArguments, createTitleMatcher, errorWithFile, forceRegExp } from '../util';
+import type { TestCase } from '../common/test';
 import type { Matcher, TestFileFilter } from '../util';
-import { buildProjectsClosure, collectFilesForProject, filterProjects } from './projectUtils';
-import type { TestRun } from './tasks';
-import { requireOrImport } from '../transform/transform';
-import { applyRepeatEachIndex, bindFileSuiteToProject, filterByFocusedLine, filterByTestIds, filterOnly, filterTestsRemoveEmptySuites } from '../common/suiteUtils';
-import { createTestGroups, filterForShard, type TestGroup } from './testGroups';
-import { dependenciesForTestFile } from '../transform/compilationCache';
-import { sourceMapSupport } from '../utilsBundle';
-import type { RawSourceMap } from 'source-map';
+import type { RawSourceMap } from '../utilsBundle';
 
 
 export async function collectProjectsAndTestFiles(testRun: TestRun, doNotRunTestsOutsideProjectFilter: boolean) {
@@ -176,8 +179,11 @@ export async function createRootSuite(testRun: TestRun, errors: TestError[], sho
   if (config.config.shard) {
     // Create test groups for top-level projects.
     const testGroups: TestGroup[] = [];
-    for (const projectSuite of rootSuite.suites)
-      testGroups.push(...createTestGroups(projectSuite, config.config.workers));
+    for (const projectSuite of rootSuite.suites) {
+      // Split beforeAll-grouped tests into "config.shard.total" groups when needed.
+      // Later on, we'll re-split them between workers by using "config.workers" instead.
+      testGroups.push(...createTestGroups(projectSuite, config.config.shard.total));
+    }
 
     // Shard test groups.
     const testGroupsInThisShard = await filterForShard(config, testGroups);
@@ -190,6 +196,10 @@ export async function createRootSuite(testRun: TestRun, errors: TestError[], sho
     // Update project suites, removing empty ones.
     filterTestsRemoveEmptySuites(rootSuite, test => testsInThisShard.has(test));
   }
+
+  // Explicitly apply --last-failed filter after sharding.
+  if (config.lastFailedTestIdMatcher)
+    filterByTestIds(rootSuite, config.lastFailedTestIdMatcher);
 
   // Now prepend dependency projects without filtration.
   {
@@ -215,7 +225,7 @@ function createProjectSuite(project: FullProjectInternal, fileSuites: Suite[]): 
   const grepMatcher = createTitleMatcher(project.project.grep);
   const grepInvertMatcher = project.project.grepInvert ? createTitleMatcher(project.project.grepInvert) : null;
   filterTestsRemoveEmptySuites(projectSuite, (test: TestCase) => {
-    const grepTitle = test._grepTitle();
+    const grepTitle = test._grepTitleWithTags();
     if (grepInvertMatcher?.(grepTitle))
       return false;
     return grepMatcher(grepTitle);
@@ -234,7 +244,7 @@ function filterProjectSuite(projectSuite: Suite, options: { cliFileFilters: Test
   if (options.testIdMatcher)
     filterByTestIds(result, options.testIdMatcher);
   filterTestsRemoveEmptySuites(result, (test: TestCase) => {
-    if (options.cliTitleMatcher && !options.cliTitleMatcher(test._grepTitle()))
+    if (options.cliTitleMatcher && !options.cliTitleMatcher(test._grepTitleWithTags()))
       return false;
     if (options.additionalFileMatcher && !options.additionalFileMatcher(test.location.file))
       return false;

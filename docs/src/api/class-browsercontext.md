@@ -363,6 +363,7 @@ await context.AddCookiesAsync(new[] { cookie1, cookie2 });
   - `httpOnly` ?<[boolean]> Optional.
   - `secure` ?<[boolean]> Optional.
   - `sameSite` ?<[SameSiteAttribute]<"Strict"|"Lax"|"None">> Optional.
+  - `partitionKey` ?<[string]> For partitioned third-party cookies (aka [CHIPS](https://developer.mozilla.org/en-US/docs/Web/Privacy/Guides/Privacy_sandbox/Partitioned_cookies)), the partition key. Optional.
 
 ## async method: BrowserContext.addInitScript
 * since: v1.8
@@ -467,7 +468,7 @@ All existing background pages in the context.
 * since: v1.8
 - returns: <[null]|[Browser]>
 
-Returns the browser instance of the context. If it was launched as a persistent context null gets returned.
+Gets the browser instance that owns the context. Returns `null` if the context is created outside of normal browser, e.g. Android or Electron.
 
 ## async method: BrowserContext.clearCookies
 * since: v1.8
@@ -602,6 +603,7 @@ The default browser context cannot be closed.
   - `httpOnly` <[boolean]>
   - `secure` <[boolean]>
   - `sameSite` <[SameSiteAttribute]<"Strict"|"Lax"|"None">>
+  - `partitionKey` ?<[string]>
 
 If no URLs are specified, this method returns all cookies. If URLs are specified, only cookies that affect those URLs
 are returned.
@@ -655,7 +657,7 @@ import com.microsoft.playwright.*;
 public class Example {
   public static void main(String[] args) {
     try (Playwright playwright = Playwright.create()) {
-      BrowserType webkit = playwright.webkit()
+      BrowserType webkit = playwright.webkit();
       Browser browser = webkit.launch(new BrowserType.LaunchOptions().setHeadless(false));
       BrowserContext context = browser.newContext();
       context.exposeBinding("pageURL", (source, args) -> source.page().url());
@@ -813,8 +815,9 @@ import java.util.Base64;
 public class Example {
   public static void main(String[] args) {
     try (Playwright playwright = Playwright.create()) {
-      BrowserType webkit = playwright.webkit()
+      BrowserType webkit = playwright.webkit();
       Browser browser = webkit.launch(new BrowserType.LaunchOptions().setHeadless(false));
+      BrowserContext context = browser.newContext();
       context.exposeFunction("sha256", args -> {
         String text = (String) args[0];
         MessageDigest crypto;
@@ -962,9 +965,14 @@ specified.
 * since: v1.8
 - `permissions` <[Array]<[string]>>
 
-A permission or an array of permissions to grant. Permissions can be one of the following values:
+A list of permissions to grant.
+
+:::danger
+Supported permissions differ between browsers, and even between different versions of the same browser. Any permission may stop working after an update.
+:::
+
+Here are some permissions that may be supported by some browsers:
 * `'accelerometer'`
-* `'accessibility-events'`
 * `'ambient-light-sensor'`
 * `'background-sync'`
 * `'camera'`
@@ -979,6 +987,7 @@ A permission or an array of permissions to grant. Permissions can be one of the 
 * `'notifications'`
 * `'payment-handler'`
 * `'storage-access'`
+* `'local-fonts'`
 
 ### option: BrowserContext.grantPermissions.origin
 * since: v1.8
@@ -1197,9 +1206,7 @@ Enabling routing disables http cache.
 * since: v1.8
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
-A glob pattern, regex pattern or predicate receiving [URL] to match while routing.
-When a [`option: baseURL`] via the context options was provided and the passed URL is a path,
-it gets merged via the [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
+A glob pattern, regex pattern, or predicate that receives a [URL] to match during routing. If [`option: Browser.newContext.baseURL`] is set in the context options and the provided URL is a string that does not start with `*`, it is resolved using the [`new URL()`](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) constructor.
 
 ### param: BrowserContext.route.handler
 * since: v1.8
@@ -1342,7 +1349,7 @@ await context.RouteWebSocketAsync("/ws", async ws => {
 * since: v1.48
 - `url` <[string]|[RegExp]|[function]\([URL]\):[boolean]>
 
-Only WebSockets with the url matching this pattern will be routed. A string pattern can be relative to the [`option: baseURL`] from the context options.
+Only WebSockets with the url matching this pattern will be routed. A string pattern can be relative to the [`option: Browser.newContext.baseURL`] context option.
 
 ### param: BrowserContext.routeWebSocket.handler
 * since: v1.48
@@ -1406,7 +1413,7 @@ This setting will change the default maximum time for all the methods accepting 
 * since: v1.8
 - `timeout` <[float]>
 
-Maximum time in milliseconds
+Maximum time in milliseconds. Pass `0` to disable timeout.
 
 ## async method: BrowserContext.setExtraHTTPHeaders
 * since: v1.8
@@ -1506,7 +1513,7 @@ Whether to emulate network being offline for the browser context.
       - `name` <[string]>
       - `value` <[string]>
 
-Returns storage state for this browser context, contains current cookies and local storage snapshot.
+Returns storage state for this browser context, contains current cookies, local storage snapshot and IndexedDB snapshot.
 
 ## async method: BrowserContext.storageState
 * since: v1.8
@@ -1515,6 +1522,13 @@ Returns storage state for this browser context, contains current cookies and loc
 
 ### option: BrowserContext.storageState.path = %%-storagestate-option-path-%%
 * since: v1.8
+
+### option: BrowserContext.storageState.indexedDB
+* since: v1.51
+- `indexedDB` ?<boolean>
+
+Set to `true` to include [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) in the storage state snapshot.
+If your application uses IndexedDB to store authentication tokens, like Firebase Authentication, enable this.
 
 ## property: BrowserContext.tracing
 * since: v1.12

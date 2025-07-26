@@ -21,22 +21,47 @@ import { TabbedPane } from '@web/components/tabbedPane';
 import { CodeMirrorWrapper } from '@web/components/codeMirrorWrapper';
 import { ToolbarButton } from '@web/components/toolbarButton';
 import { generateCurlCommand, generateFetchCall } from '../third_party/devtools';
-import { CopyToClipboard } from './copyToClipboard';
+import { CopyToClipboardTextButton } from './copyToClipboard';
+import { getAPIRequestCodeGen } from './codegen';
+import type { Language } from '@isomorphic/locatorGenerators';
+import { msToString, useAsyncMemo } from '@web/uiUtils';
+import type { Entry } from '@trace/har';
+
+type RequestBody = { text: string, mimeType?: string } | null;
+
 
 export const NetworkResourceDetails: React.FunctionComponent<{
   resource: ResourceSnapshot;
+  sdkLanguage: Language;
+  startTimeOffset: number;
   onClose: () => void;
-}> = ({ resource, onClose }) => {
+}> = ({ resource, sdkLanguage, startTimeOffset, onClose }) => {
   const [selectedTab, setSelectedTab] = React.useState('request');
+
+  const requestBody = useAsyncMemo<RequestBody>(async () => {
+    if (resource.request.postData) {
+      const requestContentTypeHeader = resource.request.headers.find(q => q.name.toLowerCase() === 'content-type');
+      const requestContentType = requestContentTypeHeader ? requestContentTypeHeader.value : '';
+      if (resource.request.postData._sha1) {
+        const response = await fetch(`sha1/${resource.request.postData._sha1}`);
+        return { text: formatBody(await response.text(), requestContentType), mimeType: requestContentType };
+      } else {
+        return { text: formatBody(resource.request.postData.text, requestContentType), mimeType: requestContentType };
+      }
+    } else {
+      return null;
+    }
+  }, [resource], null);
 
   return <TabbedPane
     dataTestId='network-request-details'
-    leftToolbar={[<ToolbarButton key='close' icon='close' title='Close' onClick={onClose}></ToolbarButton>]}
+    leftToolbar={[<ToolbarButton key='close' icon='close' title='Close' onClick={onClose} />]}
+    rightToolbar={[<CopyDropdown key='dropdown' requestBody={requestBody} resource={resource} sdkLanguage={sdkLanguage} />]}
     tabs={[
       {
         id: 'request',
         title: 'Request',
-        render: () => <RequestTab resource={resource}/>,
+        render: () => <RequestTab resource={resource} startTimeOffset={startTimeOffset} requestBody={requestBody} />,
       },
       {
         id: 'response',
@@ -53,29 +78,36 @@ export const NetworkResourceDetails: React.FunctionComponent<{
     setSelectedTab={setSelectedTab} />;
 };
 
+
+const CopyDropdown: React.FC<{
+  resource: Entry,
+  sdkLanguage: Language,
+  requestBody: RequestBody,
+}> = ({ resource, sdkLanguage, requestBody }) => {
+  const copiedDescription = <><span className='codicon codicon-check' style={{ marginRight: '5px' }} /> Copied </>;
+  const copyAsPlaywright = async () => getAPIRequestCodeGen(sdkLanguage).generatePlaywrightRequestCall(resource.request, requestBody?.text);
+  return (
+    <div className='copy-request-dropdown'>
+      <ToolbarButton className='copy-request-dropdown-toggle'>
+        <span className='codicon codicon-copy' style={{ marginRight: '5px' }}/>
+        Copy request
+        <span className='codicon codicon-chevron-down' style={{ marginLeft: '5px' }}/>
+      </ToolbarButton>
+
+      <div className='copy-request-dropdown-menu'>
+        <CopyToClipboardTextButton description='Copy as cURL' copiedDescription={copiedDescription} value={() => generateCurlCommand(resource)}/>
+        <CopyToClipboardTextButton description='Copy as Fetch' copiedDescription={copiedDescription} value={() => generateFetchCall(resource)}/>
+        <CopyToClipboardTextButton description='Copy as Playwright' copiedDescription={copiedDescription} value={copyAsPlaywright}/>
+      </div>
+    </div>
+  );
+};
+
 const RequestTab: React.FunctionComponent<{
   resource: ResourceSnapshot;
-}> = ({ resource }) => {
-  const [requestBody, setRequestBody] = React.useState<{ text: string, mimeType?: string } | null>(null);
-
-  React.useEffect(() => {
-    const readResources = async  () => {
-      if (resource.request.postData) {
-        const requestContentTypeHeader = resource.request.headers.find(q => q.name.toLowerCase() === 'content-type');
-        const requestContentType = requestContentTypeHeader ? requestContentTypeHeader.value : '';
-        if (resource.request.postData._sha1) {
-          const response = await fetch(`sha1/${resource.request.postData._sha1}`);
-          setRequestBody({ text: formatBody(await response.text(), requestContentType), mimeType: requestContentType });
-        } else {
-          setRequestBody({ text: formatBody(resource.request.postData.text, requestContentType), mimeType: requestContentType });
-        }
-      } else {
-        setRequestBody(null);
-      }
-    };
-    readResources();
-  }, [resource]);
-
+  startTimeOffset: number;
+  requestBody: RequestBody,
+}> = ({ resource, startTimeOffset, requestBody }) => {
   return <div className='network-request-details-tab'>
     <div className='network-request-details-header'>General</div>
     <div className='network-request-details-url'>{`URL: ${resource.request.url}`}</div>
@@ -92,13 +124,10 @@ const RequestTab: React.FunctionComponent<{
     </> : null}
     <div className='network-request-details-header'>Request Headers</div>
     <div className='network-request-details-headers'>{resource.request.headers.map(pair => `${pair.name}: ${pair.value}`).join('\n')}</div>
-    <div className='network-request-details-header'>Copy Request</div>
-    <div className='network-request-details-copy'>
-      As cURL: <CopyToClipboard description='Copy as cURL' value={() => generateCurlCommand(resource)}/>
-    </div>
-    <div className='network-request-details-copy'>
-      As Fetch: <CopyToClipboard description='Copy as Fetch' value={() => generateFetchCall(resource)}/>
-    </div>
+    <div className='network-request-details-header'>Time</div>
+    <div className='network-request-details-general'>{`Start: ${msToString(startTimeOffset)}`}</div>
+    <div className='network-request-details-general'>{`Duration: ${msToString(resource.time)}`}</div>
+
     {requestBody && <div className='network-request-details-header'>Request Body</div>}
     {requestBody && <CodeMirrorWrapper text={requestBody.text} mimeType={requestBody.mimeType} readOnly lineNumbers={true}/>}
   </div>;
@@ -116,7 +145,7 @@ const ResponseTab: React.FunctionComponent<{
 const BodyTab: React.FunctionComponent<{
   resource: ResourceSnapshot;
 }> = ({ resource }) => {
-  const [responseBody, setResponseBody] = React.useState<{ dataUrl?: string, text?: string, mimeType?: string, font?: BinaryData } | null>(null);
+  const [responseBody, setResponseBody] = React.useState<{ dataUrl?: string, text?: string, mimeType?: string, font?: BufferSource } | null>(null);
 
   React.useEffect(() => {
     const readResources = async  () => {
@@ -154,7 +183,7 @@ const BodyTab: React.FunctionComponent<{
 };
 
 const FontPreview: React.FunctionComponent<{
-  font: BinaryData;
+  font: BufferSource;
 }> = ({ font }) => {
   const [isError, setIsError] = React.useState(false);
 

@@ -36,7 +36,7 @@
   margin: 0 0 0 15px;
   line-height: 16px;
   font-weight: 400;
-  color: var(--color-fg-subtle);
+  color: var(--color-fg-muted);
   display: flex;
   align-items: center;
 }
@@ -44,23 +44,11 @@
 .test-file-path {
   text-overflow: ellipsis;
   overflow: hidden;
-  color: var(--color-fg-subtle);
+  color: var(--color-fg-muted);
 }
 
 .test-file-path-link {
   margin-right: 10px;
-}
-
-.test-file-badge {
-  flex: none;
-}
-
-.test-file-badge svg {
-  fill: var(--color-fg-subtle);
-}
-
-.test-file-badge:hover svg {
-  fill: var(--color-fg-muted);
 }
 
 .test-file-test-outcome-skipped {
@@ -69,4 +57,11 @@
 
 .test-file-test-status-icon {
   flex: none;
+}
+
+.test-file-header-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-fg-muted);
 }

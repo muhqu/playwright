@@ -143,12 +143,17 @@ test('should not transform external', async ({ runInlineTest }) => {
       });
     `,
     'a.spec.ts': `
-      import { test, expect } from '@playwright/test';
-      test('succeeds', () => {});
+      const { test, expect, Page } = require('@playwright/test');
+      let page: Page;
+      enum MyEnum { Value = 'value' }
+
+      test('succeeds', () => {
+        expect(MyEnum.Value).toBe('value');
+      });
     `
   });
   expect(result.exitCode).toBe(1);
-  expect(result.output).toMatch(/(Cannot use import statement outside a module|require\(\) of ES Module .* not supported.)/);
+  expect(result.output).toMatch(/(SyntaxError: Unexpected token ':')|(SyntaxError: TypeScript enum is not supported)/);
 });
 
 for (const type of ['module', undefined]) {

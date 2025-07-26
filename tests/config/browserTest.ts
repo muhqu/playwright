@@ -16,15 +16,17 @@
 
 import * as fs from 'fs';
 import * as os from 'os';
-import type { PageTestFixtures, PageWorkerFixtures } from '../page/pageTestApi';
 import * as path from 'path';
-import type { BrowserContext, BrowserContextOptions, BrowserType, Page } from 'playwright-core';
-import { removeFolders } from '../../packages/playwright-core/lib/utils/fileUtils';
 import { baseTest } from './baseTest';
-import { type RemoteServerOptions, type PlaywrightServer, RunServer, RemoteServer } from './remoteServer';
-import type { Log } from '../../packages/trace/src/har';
+import { RunServer, RemoteServer } from './remoteServer';
+import { removeFolders } from '../../packages/playwright-core/lib/server/utils/fileUtils';
 import { parseHar } from '../config/utils';
 import { createSkipTestPredicate } from '../bidi/expectationUtil';
+
+import type { PageTestFixtures, PageWorkerFixtures } from '../page/pageTestApi';
+import type { RemoteServerOptions, PlaywrightServer } from './remoteServer';
+import type { BrowserContext, BrowserContextOptions, BrowserType, Page } from 'playwright-core';
+import type { Log } from '../../packages/trace/src/har';
 import type { TestInfo } from '@playwright/test';
 
 export type BrowserTestWorkerFixtures = PageWorkerFixtures & {
@@ -35,6 +37,8 @@ export type BrowserTestWorkerFixtures = PageWorkerFixtures & {
   browserType: BrowserType;
   isAndroid: boolean;
   isElectron: boolean;
+  isHeadlessShell: boolean;
+  nodeVersion: { major: number, minor: number, patch: number };
   bidiTestSkipPredicate: (info: TestInfo) => boolean;
 };
 
@@ -63,23 +67,19 @@ const test = baseTest.extend<BrowserTestTestFixtures, BrowserTestWorkerFixtures>
   }, { scope: 'worker' }],
 
   allowsThirdParty: [async ({ browserName }, run) => {
-    if (browserName === 'firefox')
+    if (browserName === 'firefox' || browserName as any === '_bidiFirefox')
       await run(true);
     else
       await run(false);
   }, { scope: 'worker' }],
 
-  defaultSameSiteCookieValue: [async ({ browserName, platform }, run) => {
+  defaultSameSiteCookieValue: [async ({ browserName, platform, macVersion }, run) => {
     if (browserName === 'chromium' || browserName as any === '_bidiChromium')
       await run('Lax');
     else if (browserName === 'webkit' && platform === 'linux')
       await run('Lax');
-    else if (browserName === 'webkit' && platform === 'darwin' && parseInt(os.release(), 10) >= 24)
-      // macOS 15 Sequoia onwards
-      await run('Lax');
     else if (browserName === 'webkit')
-      // Windows + older macOS
-      await run('None');
+      await run('None'); // Windows + older macOS
     else if (browserName === 'firefox' || browserName as any === '_bidiFirefox')
       await run('None');
     else
@@ -90,10 +90,19 @@ const test = baseTest.extend<BrowserTestTestFixtures, BrowserTestWorkerFixtures>
     await run(Number(browserVersion.split('.')[0]));
   }, { scope: 'worker' }],
 
+  nodeVersion: [async ({}, use) => {
+    const [major, minor, patch] = process.versions.node.split('.');
+    await use({ major: +major, minor: +minor, patch: +patch });
+  }, { scope: 'worker' }],
+
   isAndroid: [false, { scope: 'worker' }],
   isElectron: [false, { scope: 'worker' }],
   electronMajorVersion: [0, { scope: 'worker' }],
   isWebView2: [false, { scope: 'worker' }],
+
+  isHeadlessShell: [async ({ browserName, channel, headless }, use) => {
+    await use(browserName === 'chromium' && (channel === 'chromium-headless-shell' || channel === 'chromium-tip-of-tree-headless-shell' || (!channel && headless)));
+  }, { scope: 'worker' }],
 
   contextFactory: async ({ _contextFactory }: any, run) => {
     await run(_contextFactory);
@@ -130,14 +139,14 @@ const test = baseTest.extend<BrowserTestTestFixtures, BrowserTestWorkerFixtures>
       await persistentContext.close();
   },
 
-  startRemoteServer: async ({ childProcess, browserType }, run) => {
+  startRemoteServer: async ({ childProcess, browserType, channel }, run) => {
     let server: PlaywrightServer | undefined;
     const fn = async (kind: 'launchServer' | 'run-server', options?: RemoteServerOptions) => {
       if (server)
         throw new Error('can only start one remote server');
       if (kind === 'launchServer') {
         const remoteServer = new RemoteServer();
-        await remoteServer._start(childProcess, browserType, options);
+        await remoteServer._start(childProcess, browserType, channel, options);
         server = remoteServer;
       } else {
         const runServer = new RunServer();
@@ -181,8 +190,7 @@ const test = baseTest.extend<BrowserTestTestFixtures, BrowserTestWorkerFixtures>
   }, { scope: 'worker' }],
 
   autoSkipBidiTest: [async ({ bidiTestSkipPredicate }, run) => {
-    if (bidiTestSkipPredicate(test.info()))
-      test.skip(true);
+    test.fixme(bidiTestSkipPredicate(test.info()), 'marked as timeout in bidi expectations');
     await run();
   }, { auto: true, scope: 'test' }],
 });

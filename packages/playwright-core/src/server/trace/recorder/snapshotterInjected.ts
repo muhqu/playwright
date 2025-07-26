@@ -47,6 +47,9 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
   const kTargetAttribute = '__playwright_target__';
   const kCustomElementsAttribute = '__playwright_custom_elements__';
   const kCurrentSrcAttribute = '__playwright_current_src__';
+  const kBoundingRectAttribute = '__playwright_bounding_rect__';
+  const kPopoverOpenAttribute = '__playwright_popover_open_';
+  const kDialogOpenAttribute = '__playwright_dialog_open_';
 
   // Symbols for our own info on Nodes/StyleSheets.
   const kSnapshotFrameId = Symbol('__playwright_snapshot_frameid_');
@@ -139,11 +142,18 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
     }
 
     private _refreshListeners() {
-      (document as any).addEventListener('__playwright_target__', (event: CustomEvent) => {
+      (document as any).addEventListener('__playwright_mark_target__', (event: CustomEvent) => {
         if (!event.detail)
           return;
         const callId = event.detail as string;
         (event.composedPath()[0] as any).__playwright_target__ = callId;
+      });
+      (document as any).addEventListener('__playwright_unmark_target__', (event: CustomEvent) => {
+        if (!event.detail)
+          return;
+        const callId = event.detail as string;
+        if ((event.composedPath()[0] as any).__playwright_target__ === callId)
+          delete (event.composedPath()[0] as any).__playwright_target__;
       });
     }
 
@@ -429,6 +439,30 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
             expectValue(value);
             attrs[kSelectedAttribute] = value;
           }
+          if (nodeName === 'CANVAS' || nodeName === 'IFRAME' || nodeName === 'FRAME') {
+            const boundingRect = (element as HTMLElement).getBoundingClientRect();
+            const value = JSON.stringify({
+              left: boundingRect.left,
+              top: boundingRect.top,
+              right: boundingRect.right,
+              bottom: boundingRect.bottom
+            });
+            expectValue(kBoundingRectAttribute);
+            expectValue(value);
+            attrs[kBoundingRectAttribute] = value;
+          }
+          if ((element as HTMLElement).popover && (element as HTMLElement).matches && (element as HTMLElement).matches(':popover-open')) {
+            const value = 'true';
+            expectValue(kPopoverOpenAttribute);
+            expectValue(value);
+            attrs[kPopoverOpenAttribute] = value;
+          }
+          if (nodeName === 'DIALOG' && (element as HTMLDialogElement).open) {
+            const value = (element as HTMLDialogElement).matches(':modal') ? 'modal' : 'true';
+            expectValue(kDialogOpenAttribute);
+            expectValue(value);
+            attrs[kDialogOpenAttribute] = value;
+          }
           if (element.scrollTop) {
             expectValue(kScrollTopAttribute);
             expectValue(element.scrollTop);
@@ -514,6 +548,8 @@ export function frameSnapshotStreamer(snapshotStreamer: string, removeNoScript: 
             if (nodeName === 'IFRAME' && (name === 'src' || name === 'srcdoc' || name === 'sandbox'))
               continue;
             if (nodeName === 'FRAME' && name === 'src')
+              continue;
+            if (nodeName === 'DIALOG' && name === 'open')
               continue;
             let value = element.attributes[i].value;
             if (nodeName === 'META')

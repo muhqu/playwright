@@ -17,6 +17,7 @@
 
 import type * as input from '../input';
 import type { Page } from '../page';
+import type { Progress } from '../progress';
 import type * as types from '../types';
 import type { FFSession } from './ffConnection';
 
@@ -61,34 +62,37 @@ export class RawKeyboardImpl implements input.RawKeyboard {
     this._client = client;
   }
 
-  async keydown(modifiers: Set<types.KeyboardModifier>, code: string, keyCode: number, keyCodeWithoutLocation: number, key: string, location: number, autoRepeat: boolean, text: string | undefined): Promise<void> {
+  async keydown(progress: Progress, modifiers: Set<types.KeyboardModifier>, keyName: string, description: input.KeyDescription, autoRepeat: boolean): Promise<void> {
+    let text = description.text;
     // Firefox will figure out Enter by itself
     if (text === '\r')
       text = '';
-    await this._client.send('Page.dispatchKeyEvent', {
+    const { code, key, location } = description;
+    await progress.race(this._client.send('Page.dispatchKeyEvent', {
       type: 'keydown',
-      keyCode: keyCodeWithoutLocation,
+      keyCode: description.keyCodeWithoutLocation,
       code,
       key,
       repeat: autoRepeat,
       location,
       text,
-    });
+    }));
   }
 
-  async keyup(modifiers: Set<types.KeyboardModifier>, code: string, keyCode: number, keyCodeWithoutLocation: number, key: string, location: number): Promise<void> {
-    await this._client.send('Page.dispatchKeyEvent', {
+  async keyup(progress: Progress, modifiers: Set<types.KeyboardModifier>, keyName: string, description: input.KeyDescription): Promise<void> {
+    const { code, key, location } = description;
+    await progress.race(this._client.send('Page.dispatchKeyEvent', {
       type: 'keyup',
       key,
-      keyCode: keyCodeWithoutLocation,
+      keyCode: description.keyCodeWithoutLocation,
       code,
       location,
       repeat: false
-    });
+    }));
   }
 
-  async sendText(text: string): Promise<void> {
-    await this._client.send('Page.insertText', { text });
+  async sendText(progress: Progress, text: string): Promise<void> {
+    await progress.race(this._client.send('Page.insertText', { text }));
   }
 }
 
@@ -100,19 +104,19 @@ export class RawMouseImpl implements input.RawMouse {
     this._client = client;
   }
 
-  async move(x: number, y: number, button: types.MouseButton | 'none', buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, forClick: boolean): Promise<void> {
-    await this._client.send('Page.dispatchMouseEvent', {
+  async move(progress: Progress, x: number, y: number, button: types.MouseButton | 'none', buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, forClick: boolean): Promise<void> {
+    await progress.race(this._client.send('Page.dispatchMouseEvent', {
       type: 'mousemove',
       button: 0,
       buttons: toButtonsMask(buttons),
       x: Math.floor(x),
       y: Math.floor(y),
       modifiers: toModifiersMask(modifiers)
-    });
+    }));
   }
 
-  async down(x: number, y: number, button: types.MouseButton, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, clickCount: number): Promise<void> {
-    await this._client.send('Page.dispatchMouseEvent', {
+  async down(progress: Progress, x: number, y: number, button: types.MouseButton, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, clickCount: number): Promise<void> {
+    await progress.race(this._client.send('Page.dispatchMouseEvent', {
       type: 'mousedown',
       button: toButtonNumber(button),
       buttons: toButtonsMask(buttons),
@@ -120,11 +124,11 @@ export class RawMouseImpl implements input.RawMouse {
       y: Math.floor(y),
       modifiers: toModifiersMask(modifiers),
       clickCount
-    });
+    }));
   }
 
-  async up(x: number, y: number, button: types.MouseButton, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, clickCount: number): Promise<void> {
-    await this._client.send('Page.dispatchMouseEvent', {
+  async up(progress: Progress, x: number, y: number, button: types.MouseButton, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, clickCount: number): Promise<void> {
+    await progress.race(this._client.send('Page.dispatchMouseEvent', {
       type: 'mouseup',
       button: toButtonNumber(button),
       buttons: toButtonsMask(buttons),
@@ -132,20 +136,20 @@ export class RawMouseImpl implements input.RawMouse {
       y: Math.floor(y),
       modifiers: toModifiersMask(modifiers),
       clickCount
-    });
+    }));
   }
 
-  async wheel(x: number, y: number, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, deltaX: number, deltaY: number): Promise<void> {
+  async wheel(progress: Progress, x: number, y: number, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, deltaX: number, deltaY: number): Promise<void> {
     // Wheel events hit the compositor first, so wait one frame for it to be synced.
     await this._page!.mainFrame().evaluateExpression(`new Promise(requestAnimationFrame)`, { world: 'utility' });
-    await this._client.send('Page.dispatchWheelEvent', {
+    await progress.race(this._client.send('Page.dispatchWheelEvent', {
       deltaX,
       deltaY,
       x: Math.floor(x),
       y: Math.floor(y),
       deltaZ: 0,
       modifiers: toModifiersMask(modifiers)
-    });
+    }));
   }
 
   setPage(page: Page) {
@@ -159,11 +163,11 @@ export class RawTouchscreenImpl implements input.RawTouchscreen {
   constructor(client: FFSession) {
     this._client = client;
   }
-  async tap(x: number, y: number, modifiers: Set<types.KeyboardModifier>) {
-    await this._client.send('Page.dispatchTapEvent', {
+  async tap(progress: Progress, x: number, y: number, modifiers: Set<types.KeyboardModifier>) {
+    await progress.race(this._client.send('Page.dispatchTapEvent', {
       x,
       y,
       modifiers: toModifiersMask(modifiers),
-    });
+    }));
   }
 }

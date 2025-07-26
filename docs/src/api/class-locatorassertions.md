@@ -14,14 +14,14 @@ test('status becomes submitted', async ({ page }) => {
 ```
 
 ```java
-...
+// ...
 import static com.microsoft.playwright.assertions.PlaywrightAssertions.assertThat;
 
 public class TestLocator {
-  ...
+  // ...
   @Test
   void statusBecomesSubmitted() {
-    ...
+    // ...
     page.getByRole(AriaRole.BUTTON).click();
     assertThat(page.locator(".status")).hasText("Submitted");
   }
@@ -197,6 +197,21 @@ The opposite of [`method: LocatorAssertions.toBeVisible`].
 ### option: LocatorAssertions.NotToBeVisible.timeout = %%-csharp-java-python-assertions-timeout-%%
 * since: v1.18
 
+## async method: LocatorAssertions.NotToContainClass
+* since: v1.52
+* langs: python
+
+The opposite of [`method: LocatorAssertions.toContainClass`].
+
+### param: LocatorAssertions.NotToContainClass.expected
+* since: v1.52
+- `expected` <[string]|[Array]<[string]>>
+
+Expected class or RegExp or a list of those.
+
+### option: LocatorAssertions.NotToContainClass.timeout = %%-csharp-java-python-assertions-timeout-%%
+* since: v1.52
+
 ## async method: LocatorAssertions.NotToContainText
 * since: v1.20
 * langs: python
@@ -239,6 +254,24 @@ Expected accessible description.
 
 ### option: LocatorAssertions.NotToHaveAccessibleDescription.timeout = %%-csharp-java-python-assertions-timeout-%%
 * since: v1.44
+
+## async method: LocatorAssertions.NotToHaveAccessibleErrorMessage
+* since: v1.50
+* langs: python
+
+The opposite of [`method: LocatorAssertions.toHaveAccessibleErrorMessage`].
+
+### param: LocatorAssertions.NotToHaveAccessibleErrorMessage.errorMessage
+* since: v1.50
+- `errorMessage` <[string]|[RegExp]>
+
+Expected accessible error message.
+
+### option: LocatorAssertions.NotToHaveAccessibleErrorMessage.ignoreCase = %%-assertions-ignore-case-%%
+* since: v1.50
+
+### option: LocatorAssertions.NotToHaveAccessibleErrorMessage.timeout = %%-csharp-java-python-assertions-timeout-%%
+* since: v1.50
 
 
 ## async method: LocatorAssertions.NotToHaveAccessibleName
@@ -442,6 +475,23 @@ Expected options currently selected.
 ### option: LocatorAssertions.NotToHaveValues.timeout = %%-csharp-java-python-assertions-timeout-%%
 * since: v1.23
 
+## async method: LocatorAssertions.NotToMatchAriaSnapshot
+* since: v1.49
+* langs: python
+
+The opposite of [`method: LocatorAssertions.toMatchAriaSnapshot`].
+
+### param: LocatorAssertions.NotToMatchAriaSnapshot.expected
+* since: v1.49
+- `expected` <string>
+
+### option: LocatorAssertions.NotToMatchAriaSnapshot.timeout = %%-js-assertions-timeout-%%
+* since: v1.49
+
+### option: LocatorAssertions.NotToMatchAriaSnapshot.timeout = %%-csharp-java-python-assertions-timeout-%%
+* since: v1.49
+
+
 
 ## async method: LocatorAssertions.toBeAttached
 * since: v1.33
@@ -523,6 +573,16 @@ await Expect(locator).ToBeCheckedAsync();
 ### option: LocatorAssertions.toBeChecked.checked
 * since: v1.18
 - `checked` <[boolean]>
+
+Provides state to assert for. Asserts for input to be checked by default.
+This option can't be used when [`option: LocatorAssertions.toBeChecked.indeterminate`] is set to true.
+
+### option: LocatorAssertions.toBeChecked.indeterminate
+* since: v1.50
+- `indeterminate` <[boolean]>
+
+Asserts that the element is in the indeterminate (mixed) state. Only supported for checkboxes and radio buttons.
+This option can't be true when [`option: LocatorAssertions.toBeChecked.checked`] is provided.
 
 ### option: LocatorAssertions.toBeChecked.timeout = %%-js-assertions-timeout-%%
 * since: v1.18
@@ -701,7 +761,7 @@ expect(locator).to_be_enabled()
 
 ```csharp
 var locator = Page.Locator("button.submit");
-await Expect(locator).toBeEnabledAsync();
+await Expect(locator).ToBeEnabledAsync();
 ```
 
 ### option: LocatorAssertions.toBeEnabled.enabled
@@ -973,6 +1033,107 @@ await Expect(
 ### option: LocatorAssertions.toBeVisible.timeout = %%-csharp-java-python-assertions-timeout-%%
 * since: v1.18
 
+## async method: LocatorAssertions.toContainClass
+* since: v1.52
+* langs:
+  - alias-java: containsClass
+
+Ensures the [Locator] points to an element with given CSS classes. All classes from the asserted value, separated by spaces, must be present in the [Element.classList](https://developer.mozilla.org/en-US/docs/Web/API/Element/classList) in any order.
+
+**Usage**
+
+```html
+<div class='middle selected row' id='component'></div>
+```
+
+```js
+const locator = page.locator('#component');
+await expect(locator).toContainClass('middle selected row');
+await expect(locator).toContainClass('selected');
+await expect(locator).toContainClass('row middle');
+```
+
+```java
+assertThat(page.locator("#component")).containsClass("middle selected row");
+assertThat(page.locator("#component")).containsClass("selected");
+assertThat(page.locator("#component")).containsClass("row middle");
+```
+
+```python async
+from playwright.async_api import expect
+
+locator = page.locator("#component")
+await expect(locator).to_contain_class("middle selected row")
+await expect(locator).to_contain_class("selected")
+await expect(locator).to_contain_class("row middle")
+```
+
+```python sync
+from playwright.sync_api import expect
+
+locator = page.locator("#component")
+expect(locator).to_contain_class("middle selected row")
+expect(locator).to_contain_class("selected")
+expect(locator).to_contain_class("row middle")
+```
+
+```csharp
+var locator = Page.Locator("#component");
+await Expect(locator).ToContainClassAsync("middle selected row");
+await Expect(locator).ToContainClassAsync("selected");
+await Expect(locator).ToContainClassAsync("row middle");
+```
+
+When an array is passed, the method asserts that the list of elements located matches the corresponding list of expected class lists. Each element's class attribute is matched against the corresponding class in the array:
+
+```html
+<div class='list'>
+  <div class='component inactive'></div>
+  <div class='component active'></div>
+  <div class='component inactive'></div>
+</div>
+```
+
+```js
+const locator = page.locator('.list > .component');
+await expect(locator).toContainClass(['inactive', 'active', 'inactive']);
+```
+
+```java
+assertThat(page.locator(".list > .component")).containsClass(new String[] {"inactive", "active", "inactive"});
+```
+
+```python async
+from playwright.async_api import expect
+
+locator = page.locator(".list > .component")
+await expect(locator).to_contain_class(["inactive", "active", "inactive"])
+```
+
+```python sync
+from playwright.sync_api import expect
+
+locator = page.locator(".list > .component")
+await expect(locator).to_contain_class(["inactive", "active", "inactive"])
+```
+
+```csharp
+var locator = Page.Locator(".list > .component");
+await Expect(locator).ToContainClassAsync(new string[]{"inactive", "active", "inactive"});
+```
+
+### param: LocatorAssertions.toContainClass.expected
+* since: v1.52
+- `expected` <[string]|[Array]<[string]>>
+
+A string containing expected class names, separated by spaces, or a list of such strings to assert multiple elements.
+
+### option: LocatorAssertions.toContainClass.timeout = %%-js-assertions-timeout-%%
+* since: v1.52
+
+### option: LocatorAssertions.toContainClass.timeout = %%-csharp-java-python-assertions-timeout-%%
+* since: v1.52
+
 ## async method: LocatorAssertions.toContainText
 * since: v1.20
 * langs:
@@ -1181,7 +1342,7 @@ expect(locator).to_have_accessible_description("Save results to disk")
 
 ```csharp
 var locator = Page.GetByTestId("save-button");
-await Expect(locator).toHaveAccessibleDescriptionAsync("Save results to disk");
+await Expect(locator).ToHaveAccessibleDescriptionAsync("Save results to disk");
 ```
 
 ### param: LocatorAssertions.toHaveAccessibleDescription.description
@@ -1198,6 +1359,56 @@ Expected accessible description.
 
 ### option: LocatorAssertions.toHaveAccessibleDescription.ignoreCase = %%-assertions-ignore-case-%%
 * since: v1.44
+
+
+## async method: LocatorAssertions.toHaveAccessibleErrorMessage
+* since: v1.50
+* langs:
+  - alias-java: hasAccessibleErrorMessage
+
+Ensures the [Locator] points to an element with a given [aria errormessage](https://w3c.github.io/aria/#aria-errormessage).
+
+**Usage**
+
+```js
+const locator = page.getByTestId('username-input');
+await expect(locator).toHaveAccessibleErrorMessage('Username is required.');
+```
+
+```java
+Locator locator = page.getByTestId("username-input");
+assertThat(locator).hasAccessibleErrorMessage("Username is required.");
+```
+
+```python async
+locator = page.get_by_test_id("username-input")
+await expect(locator).to_have_accessible_error_message("Username is required.")
+```
+
+```python sync
+locator = page.get_by_test_id("username-input")
+expect(locator).to_have_accessible_error_message("Username is required.")
+```
+
+```csharp
+var locator = Page.GetByTestId("username-input");
+await Expect(locator).ToHaveAccessibleErrorMessageAsync("Username is required.");
+```
+
+### param: LocatorAssertions.toHaveAccessibleErrorMessage.errorMessage
+* since: v1.50
+- `errorMessage` <[string]|[RegExp]>
+
+Expected accessible error message.
+
+### option: LocatorAssertions.toHaveAccessibleErrorMessage.timeout = %%-js-assertions-timeout-%%
+* since: v1.50
+
+### option: LocatorAssertions.toHaveAccessibleErrorMessage.timeout = %%-csharp-java-python-assertions-timeout-%%
+* since: v1.50
+
+### option: LocatorAssertions.toHaveAccessibleErrorMessage.ignoreCase = %%-assertions-ignore-case-%%
+* since: v1.50
 
 
 ## async method: LocatorAssertions.toHaveAccessibleName
@@ -1231,7 +1442,7 @@ expect(locator).to_have_accessible_name("Save to disk")
 
 ```csharp
 var locator = Page.GetByTestId("save-button");
-await Expect(locator).toHaveAccessibleNameAsync("Save to disk");
+await Expect(locator).ToHaveAccessibleNameAsync("Save to disk");
 ```
 
 ### param: LocatorAssertions.toHaveAccessibleName.name
@@ -1336,75 +1547,74 @@ Attribute name.
 * langs:
   - alias-java: hasClass
 
-Ensures the [Locator] points to an element with given CSS classes. This needs to be a full match
-or using a relaxed regular expression.
+Ensures the [Locator] points to an element with given CSS classes. When a string is provided, it must fully match the element's `class` attribute. To match individual classes use [`method: LocatorAssertions.toContainClass`].
 
 **Usage**
 
 ```html
-<div class='selected row' id='component'></div>
+<div class='middle selected row' id='component'></div>
 ```
 
 ```js
 const locator = page.locator('#component');
-await expect(locator).toHaveClass(/selected/);
-await expect(locator).toHaveClass('selected row');
+await expect(locator).toHaveClass('middle selected row');
+await expect(locator).toHaveClass(/(^|\s)selected(\s|$)/);
 ```
 
 ```java
-assertThat(page.locator("#component")).hasClass(Pattern.compile("selected"));
-assertThat(page.locator("#component")).hasClass("selected row");
+assertThat(page.locator("#component")).hasClass("middle selected row");
+assertThat(page.locator("#component")).hasClass(Pattern.compile("(^|\\s)selected(\\s|$)"));
 ```
 
 ```python async
 from playwright.async_api import expect
 
 locator = page.locator("#component")
-await expect(locator).to_have_class(re.compile(r"selected"))
-await expect(locator).to_have_class("selected row")
+await expect(locator).to_have_class("middle selected row")
+await expect(locator).to_have_class(re.compile(r"(^|\\s)selected(\\s|$)"))
 ```
 
 ```python sync
 from playwright.sync_api import expect
 
 locator = page.locator("#component")
-expect(locator).to_have_class(re.compile(r"selected"))
-expect(locator).to_have_class("selected row")
+expect(locator).to_have_class("middle selected row")
+expect(locator).to_have_class(re.compile(r"(^|\\s)selected(\\s|$)"))
 ```
 
 ```csharp
 var locator = Page.Locator("#component");
-await Expect(locator).ToHaveClassAsync(new Regex("selected"));
-await Expect(locator).ToHaveClassAsync("selected row");
+await Expect(locator).ToHaveClassAsync("middle selected row");
+await Expect(locator).ToHaveClassAsync(new Regex("(^|\\s)selected(\\s|$)"));
 ```
 
-Note that if array is passed as an expected value, entire lists of elements can be asserted:
+When an array is passed, the method asserts that the list of elements located matches the corresponding list of expected class values. Each element's class attribute is matched against the corresponding string or regular expression in the array:
 
 ```js
-const locator = page.locator('list > .component');
+const locator = page.locator('.list > .component');
 await expect(locator).toHaveClass(['component', 'component selected', 'component']);
 ```
 
 ```java
-assertThat(page.locator("list > .component")).hasClass(new String[] {"component", "component selected", "component"});
+assertThat(page.locator(".list > .component")).hasClass(new String[] {"component", "component selected", "component"});
 ```
 
 ```python async
 from playwright.async_api import expect
 
-locator = page.locator("list > .component")
+locator = page.locator(".list > .component")
 await expect(locator).to_have_class(["component", "component selected", "component"])
 ```
 
 ```python sync
 from playwright.sync_api import expect
 
-locator = page.locator("list > .component")
+locator = page.locator(".list > .component")
 expect(locator).to_have_class(["component", "component selected", "component"])
 ```
 
 ```csharp
-var locator = Page.Locator("list > .component");
+var locator = Page.Locator(".list > .component");
 await Expect(locator).ToHaveClassAsync(new string[]{"component", "component selected", "component"});
 ```
 
@@ -2048,7 +2258,7 @@ await expect(locator).toHaveValues([/R/, /G/]);
 ```
 
 ```java
-page.locator("id=favorite-colors").selectOption(["R", "G"]);
+page.locator("id=favorite-colors").selectOption(new String[]{"R", "G"});
 assertThat(page.locator("id=favorite-colors")).hasValues(new Pattern[] { Pattern.compile("R"), Pattern.compile("G") });
 ```
 
@@ -2103,3 +2313,91 @@ Expected options currently selected.
 ### option: LocatorAssertions.toHaveValues.timeout = %%-csharp-java-python-assertions-timeout-%%
 * since: v1.23
 
+
+## async method: LocatorAssertions.toMatchAriaSnapshot
+* since: v1.49
+* langs:
+  - alias-java: matchesAriaSnapshot
+
+Asserts that the target element matches the given [accessibility snapshot](../aria-snapshots.md).
+
+**Usage**
+
+```js
+await page.goto('https://demo.playwright.dev/todomvc/');
+await expect(page.locator('body')).toMatchAriaSnapshot(`
+  - heading "todos"
+  - textbox "What needs to be done?"
+`);
+```
+
+```python async
+await page.goto("https://demo.playwright.dev/todomvc/")
+await expect(page.locator('body')).to_match_aria_snapshot('''
+  - heading "todos"
+  - textbox "What needs to be done?"
+''')
+```
+
+```python sync
+page.goto("https://demo.playwright.dev/todomvc/")
+expect(page.locator('body')).to_match_aria_snapshot('''
+  - heading "todos"
+  - textbox "What needs to be done?"
+''')
+```
+
+```csharp
+await page.GotoAsync("https://demo.playwright.dev/todomvc/");
+await Expect(page.Locator("body")).ToMatchAriaSnapshotAsync(@"
+  - heading ""todos""
+  - textbox ""What needs to be done?""
+");
+```
+
+```java
+page.navigate("https://demo.playwright.dev/todomvc/");
+assertThat(page.locator("body")).matchesAriaSnapshot("""
+  - heading "todos"
+  - textbox "What needs to be done?"
+""");
+```
+
+### param: LocatorAssertions.toMatchAriaSnapshot.expected
+* since: v1.49
+- `expected` <string>
+
+### option: LocatorAssertions.toMatchAriaSnapshot.timeout = %%-js-assertions-timeout-%%
+* since: v1.49
+
+### option: LocatorAssertions.toMatchAriaSnapshot.timeout = %%-csharp-java-python-assertions-timeout-%%
+* since: v1.49
+
+## async method: LocatorAssertions.toMatchAriaSnapshot#2
+* since: v1.50
+* langs: js
+
+Asserts that the target element matches the given [accessibility snapshot](../aria-snapshots.md).
+
+Snapshot is stored in a separate `.aria.yml` file in a location configured by `expect.toMatchAriaSnapshot.pathTemplate` and/or `snapshotPathTemplate` properties in the configuration file.
+
+**Usage**
+
+```js
+await expect(page.locator('body')).toMatchAriaSnapshot();
+await expect(page.locator('body')).toMatchAriaSnapshot({ name: 'body.aria.yml' });
+```
+
+### option: LocatorAssertions.toMatchAriaSnapshot#2.name
+* since: v1.50
+* langs: js
+- `name` <[string]>
+
+Name of the snapshot to store in the snapshot folder corresponding to this test.
+Generates sequential names if not specified.
+
+### option: LocatorAssertions.toMatchAriaSnapshot#2.timeout = %%-js-assertions-timeout-%%
+* since: v1.50
+
+### option: LocatorAssertions.toMatchAriaSnapshot#2.timeout = %%-csharp-java-python-assertions-timeout-%%
+* since: v1.50

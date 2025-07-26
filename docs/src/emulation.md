@@ -188,7 +188,7 @@ page.setViewportSize(1600, 1200);
 // Emulate high-DPI
 BrowserContext context = browser.newContext(new Browser.NewContextOptions()
   .setViewportSize(2560, 1440)
-  .setDeviceScaleFactor(2);
+  .setDeviceScaleFactor(2));
 ```
 
 ```python async
@@ -289,17 +289,17 @@ await using var context = await browser.NewContextAsync(new()
 
 ## Locale & Timezone
 
-Emulate the user Locale and Timezone which can be set globally for all tests in the config and then overridden for particular tests.
+Emulate the browser Locale and Timezone which can be set globally for all tests in the config and then overridden for particular tests.
 
 ```js title="playwright.config.ts"
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   use: {
-    // Emulates the user locale.
+    // Emulates the browser locale.
     locale: 'en-GB',
 
-    // Emulates the user timezone.
+    // Emulates the browser timezone.
     timezoneId: 'Europe/Paris',
   },
 });
@@ -355,6 +355,13 @@ await using var context = await browser.NewContextAsync(new()
 ```
 
 <img width="1394" alt="Bing in german lang and timezone" src="https://user-images.githubusercontent.com/13063165/220416571-ccc96ab1-44bb-4579-8430-64502fc24a15.png" />
+
+######
+* langs: js
+
+Note that this only affects the browser timezone and locale, not the test runner timezone.
+To set the test runner timezone, you can use the [`TZ` environment variable](https://nodejs.org/api/cli.html#tz).
+
 ## Permissions
 
 Allow app to show system notifications.
@@ -378,7 +385,7 @@ const context = await browser.newContext({
 
 ```java
 BrowserContext context = browser.newContext(new Browser.NewContextOptions()
-  .setPermissions(Arrays.asList("notifications"));
+  .setPermissions(Arrays.asList("notifications")));
 ```
 
 ```python async
@@ -558,7 +565,7 @@ await context.SetGeolocationAsync(new Geolocation() { Longitude = 48.858455, Lat
 **Note** you can only change geolocation for all pages in the context.
 ## Color Scheme and Media
 
-Emulate the users `"colorScheme"`. Supported values are 'light', 'dark', 'no-preference'. You can also emulate the media type with [`method: Page.emulateMedia`].
+Emulate the users `"colorScheme"`. Supported values are 'light' and 'dark'. You can also emulate the media type with [`method: Page.emulateMedia`].
 
 ```js title="playwright.config.ts"
 import { defineConfig } from '@playwright/test';

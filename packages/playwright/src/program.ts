@@ -16,31 +16,45 @@
 
 /* eslint-disable no-console */
 
-import type { Command } from 'playwright-core/lib/utilsBundle';
 import fs from 'fs';
 import path from 'path';
-import { Runner } from './runner/runner';
-import { stopProfiling, startProfiling, gracefullyProcessExitDoNotHang } from 'playwright-core/lib/utils';
-import { serializeError } from './util';
+
+import { program } from 'playwright-core/lib/cli/program';
+import { gracefullyProcessExitDoNotHang, startProfiling, stopProfiling } from 'playwright-core/lib/utils';
+
+import { builtInReporters, defaultReporter, defaultTimeout } from './common/config';
+import { loadConfigFromFile, loadEmptyConfigForMergeReports, resolveConfigLocation } from './common/configLoader';
+export { program } from 'playwright-core/lib/cli/program';
+import { prepareErrorStack } from './reporters/base';
 import { showHTMLReport } from './reporters/html';
 import { createMergedReport } from './reporters/merge';
-import { loadConfigFromFileRestartIfNeeded, loadEmptyConfigForMergeReports, resolveConfigLocation } from './common/configLoader';
-import type { ConfigCLIOverrides } from './common/ipc';
-import type { TestError } from '../types/testReporter';
-import type { TraceMode, ShardingMode } from '../types/test';
-import { builtInReporters, defaultReporter, defaultTimeout } from './common/config';
-import { program } from 'playwright-core/lib/cli/program';
-export { program } from 'playwright-core/lib/cli/program';
-import type { ReporterDescription } from '../types/test';
-import { prepareErrorStack } from './reporters/base';
+import { filterProjects } from './runner/projectUtils';
+import { Runner } from './runner/runner';
 import * as testServer from './runner/testServer';
 import { runWatchModeLoop } from './runner/watchMode';
+import { serializeError } from './util';
+
+import type { TestError } from '../types/testReporter';
+import type { ConfigCLIOverrides } from './common/ipc';
+import type { TraceMode, ShardingMode } from '../types/test';
+import type { ReporterDescription } from '../types/test';
+import type { Command } from 'playwright-core/lib/utilsBundle';
 
 function addTestCommand(program: Command) {
   const command = program.command('test [test-filter...]');
   command.description('run tests with Playwright Test');
   const options = testOptions.sort((a, b) => a[0].replace(/-/g, '').localeCompare(b[0].replace(/-/g, '')));
-  options.forEach(([name, description]) => command.option(name, description));
+  options.forEach(([name, { description, choices, preset }]) => {
+    const option = command.createOption(name, description);
+    if (choices)
+      option.choices(choices);
+    if (preset)
+      option.preset(preset);
+    // We don't set the default value here, because we want not specified options to
+    // fall back to the user config, which we haven't parsed yet.
+    command.addOption(option);
+    return command;
+  });
   command.action(async (args, opts) => {
     try {
       await runTests(args, opts);
@@ -73,9 +87,7 @@ function addClearCacheCommand(program: Command) {
   command.description('clears build and test caches');
   command.option('-c, --config <file>', `Configuration file, or a test directory with optional "playwright.config.{m,c}?{js,ts}"`);
   command.action(async opts => {
-    const config = await loadConfigFromFileRestartIfNeeded(opts.config);
-    if (!config)
-      return;
+    const config = await loadConfigFromFile(opts.config);
     const runner = new Runner(config);
     const { status } = await runner.clearCache();
     const exitCode = status === 'interrupted' ? 130 : (status === 'passed' ? 0 : 1);
@@ -98,9 +110,7 @@ function addDevServerCommand(program: Command) {
   command.description('start dev server');
   command.option('-c, --config <file>', `Configuration file, or a test directory with optional "playwright.config.{m,c}?{js,ts}"`);
   command.action(async options => {
-    const config = await loadConfigFromFileRestartIfNeeded(options.config);
-    if (!config)
-      return;
+    const config = await loadConfigFromFile(options.config);
     const runner = new Runner(config);
     const { status } = await runner.runDevServer();
     const exitCode = status === 'interrupted' ? 130 : (status === 'passed' ? 0 : 1);
@@ -158,27 +168,33 @@ async function runTests(args: string[], opts: { [key: string]: any }) {
   await startProfiling();
   const cliOverrides = overridesFromOptions(opts);
 
+  const config = await loadConfigFromFile(opts.config, cliOverrides, opts.deps === false);
+  config.cliArgs = args;
+  config.cliGrep = opts.grep as string | undefined;
+  config.cliOnlyChanged = opts.onlyChanged === true ? 'HEAD' : opts.onlyChanged;
+  config.cliGrepInvert = opts.grepInvert as string | undefined;
+  config.cliListOnly = !!opts.list;
+  config.cliProjectFilter = opts.project || undefined;
+  config.cliPassWithNoTests = !!opts.passWithNoTests;
+  config.cliLastFailed = !!opts.lastFailed;
+
+  // Evaluate project filters against config before starting execution. This enables a consistent error message across run modes
+  filterProjects(config.projects, config.cliProjectFilter);
+
   if (opts.ui || opts.uiHost || opts.uiPort) {
     if (opts.onlyChanged)
       throw new Error(`--only-changed is not supported in UI mode. If you'd like that to change, see https://github.com/microsoft/playwright/issues/15075 for more details.`);
 
-    const status = await testServer.runUIMode(opts.config, {
+    const status = await testServer.runUIMode(opts.config, cliOverrides, {
       host: opts.uiHost,
       port: opts.uiPort ? +opts.uiPort : undefined,
       args,
       grep: opts.grep as string | undefined,
       grepInvert: opts.grepInvert as string | undefined,
       project: opts.project || undefined,
-      headed: opts.headed,
       reporter: Array.isArray(opts.reporter) ? opts.reporter : opts.reporter ? [opts.reporter] : undefined,
-      workers: cliOverrides.workers,
-      timeout: cliOverrides.timeout,
-      outputDir: cliOverrides.outputDir,
-      updateSnapshots: cliOverrides.updateSnapshots,
     });
     await stopProfiling('runner');
-    if (status === 'restarted')
-      return;
     const exitCode = status === 'interrupted' ? 130 : (status === 'passed' ? 0 : 1);
     gracefullyProcessExitDoNotHang(exitCode);
     return;
@@ -197,26 +213,10 @@ async function runTests(args: string[], opts: { [key: string]: any }) {
         }
     );
     await stopProfiling('runner');
-    if (status === 'restarted')
-      return;
     const exitCode = status === 'interrupted' ? 130 : (status === 'passed' ? 0 : 1);
     gracefullyProcessExitDoNotHang(exitCode);
     return;
   }
-
-  const config = await loadConfigFromFileRestartIfNeeded(opts.config, cliOverrides, opts.deps === false);
-  if (!config)
-    return;
-
-  config.cliArgs = args;
-  config.cliGrep = opts.grep as string | undefined;
-  config.cliOnlyChanged = opts.onlyChanged === true ? 'HEAD' : opts.onlyChanged;
-  config.cliGrepInvert = opts.grepInvert as string | undefined;
-  config.cliListOnly = !!opts.list;
-  config.cliProjectFilter = opts.project || undefined;
-  config.cliPassWithNoTests = !!opts.passWithNoTests;
-  config.cliFailOnFlakyTests = !!opts.failOnFlakyTests;
-  config.cliLastFailed = !!opts.lastFailed;
 
   const runner = new Runner(config);
   const status = await runner.runAllTests();
@@ -228,9 +228,7 @@ async function runTests(args: string[], opts: { [key: string]: any }) {
 async function runTestServer(opts: { [key: string]: any }) {
   const host = opts.host || 'localhost';
   const port = opts.port ? +opts.port : 0;
-  const status = await testServer.runTestServer(opts.config, { host, port });
-  if (status === 'restarted')
-    return;
+  const status = await testServer.runTestServer(opts.config, { }, { host, port });
   const exitCode = status === 'interrupted' ? 130 : (status === 'passed' ? 0 : 1);
   gracefullyProcessExitDoNotHang(exitCode);
 }
@@ -240,9 +238,7 @@ export async function withRunnerAndMutedWrite(configFile: string | undefined, ca
   const stdoutWrite = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((a: any, b: any, c: any) => process.stderr.write(a, b, c)) as any;
   try {
-    const config = await loadConfigFromFileRestartIfNeeded(configFile);
-    if (!config)
-      return;
+    const config = await loadConfigFromFile(configFile);
     const runner = new Runner(config);
     const result = await callback(runner);
     stdoutWrite(JSON.stringify(result, undefined, 2), () => {
@@ -266,9 +262,7 @@ async function listTestFiles(opts: { [key: string]: any }) {
 async function mergeReports(reportDir: string | undefined, opts: { [key: string]: any }) {
   const configFile = opts.config;
   const cliOverrides = overridesFromOptions(opts);
-  const config = configFile ? await loadConfigFromFileRestartIfNeeded(configFile, cliOverrides) : await loadEmptyConfigForMergeReports(cliOverrides);
-  if (!config)
-    return;
+  const config = configFile ? await loadConfigFromFile(configFile, cliOverrides) : await loadEmptyConfigForMergeReports(cliOverrides);
 
   const dir = path.resolve(process.cwd(), reportDir || '');
   const dirStat = await fs.promises.stat(dir).catch(e => null);
@@ -287,8 +281,8 @@ async function mergeReports(reportDir: string | undefined, opts: { [key: string]
 }
 
 function overridesFromOptions(options: { [key: string]: any }): ConfigCLIOverrides {
-  const shardPair = options.shard ? options.shard.split('/').map((t: string) => parseInt(t, 10)) : undefined;
   const overrides: ConfigCLIOverrides = {
+    failOnFlakyTests: options.failOnFlakyTests ? true : undefined,
     forbidOnly: options.forbidOnly ? true : undefined,
     fullyParallel: options.fullyParallel ? true : undefined,
     globalTimeout: options.globalTimeout ? parseInt(options.globalTimeout, 10) : undefined,
@@ -298,13 +292,14 @@ function overridesFromOptions(options: { [key: string]: any }): ConfigCLIOverrid
     repeatEach: options.repeatEach ? parseInt(options.repeatEach, 10) : undefined,
     retries: options.retries ? parseInt(options.retries, 10) : undefined,
     reporter: resolveReporterOption(options.reporter),
-    shard: shardPair ? { current: shardPair[0], total: shardPair[1] } : undefined,
+    shard: resolveShardOption(options.shard),
     shardingMode: options.shardingMode ? resolveShardingModeOption(options.shardingMode) : undefined,
     lastRunFile: options.lastRunFile ? path.resolve(process.cwd(), options.lastRunFile) : undefined,
     timeout: options.timeout ? parseInt(options.timeout, 10) : undefined,
     tsconfig: options.tsconfig ? path.resolve(process.cwd(), options.tsconfig) : undefined,
     ignoreSnapshots: options.ignoreSnapshots ? !!options.ignoreSnapshots : undefined,
-    updateSnapshots: options.updateSnapshots ? 'all' as const : undefined,
+    updateSnapshots: options.updateSnapshots,
+    updateSourceMethod: options.updateSourceMethod,
     workers: options.workers,
   };
 
@@ -328,11 +323,12 @@ function overridesFromOptions(options: { [key: string]: any }): ConfigCLIOverrid
     process.env.PWDEBUG = '1';
   }
   if (!options.ui && options.trace) {
-    if (!kTraceModes.includes(options.trace))
-      throw new Error(`Unsupported trace mode "${options.trace}", must be one of ${kTraceModes.map(mode => `"${mode}"`).join(', ')}`);
     overrides.use = overrides.use || {};
     overrides.use.trace = options.trace;
   }
+  if (overrides.tsconfig && !fs.existsSync(overrides.tsconfig))
+    throw new Error(`--tsconfig "${options.tsconfig}" does not exist`);
+
   return overrides;
 }
 
@@ -352,6 +348,34 @@ function resolveReporterOption(reporter?: string): ReporterDescription[] | undef
   return reporter.split(',').map((r: string) => [resolveReporter(r)]);
 }
 
+function resolveShardOption(shard?: string): ConfigCLIOverrides['shard'] {
+  if (!shard)
+    return undefined;
+
+  const shardPair = shard.split('/');
+
+  if (shardPair.length !== 2) {
+    throw new Error(
+        `--shard "${shard}", expected format is "current/all", 1-based, for example "3/5".`,
+    );
+  }
+
+  const current = parseInt(shardPair[0], 10);
+  const total = parseInt(shardPair[1], 10);
+
+  if (isNaN(total) || total < 1)
+    throw new Error(`--shard "${shard}" total must be a positive number`);
+
+
+  if (isNaN(current) || current < 1 || current > total) {
+    throw new Error(
+        `--shard "${shard}" current must be a positive number, not greater than shard total`,
+    );
+  }
+
+  return { current, total };
+}
+
 function resolveReporter(id: string) {
   if (builtInReporters.includes(id as any))
     return id;
@@ -363,42 +387,45 @@ function resolveReporter(id: string) {
 
 const kTraceModes: TraceMode[] = ['on', 'off', 'on-first-retry', 'on-all-retries', 'retain-on-failure', 'retain-on-first-failure'];
 
-const testOptions: [string, string][] = [
-  ['--browser <browser>', `Browser to use for tests, one of "all", "chromium", "firefox" or "webkit" (default: "chromium")`],
-  ['-c, --config <file>', `Configuration file, or a test directory with optional "playwright.config.{m,c}?{js,ts}"`],
-  ['--debug', `Run tests with Playwright Inspector. Shortcut for "PWDEBUG=1" environment variable and "--timeout=0 --max-failures=1 --headed --workers=1" options`],
-  ['--fail-on-flaky-tests', `Fail if any test is flagged as flaky (default: false)`],
-  ['--forbid-only', `Fail if test.only is called (default: false)`],
-  ['--fully-parallel', `Run all tests in parallel (default: false)`],
-  ['--global-timeout <timeout>', `Maximum time this test suite can run in milliseconds (default: unlimited)`],
-  ['-g, --grep <grep>', `Only run tests matching this regular expression (default: ".*")`],
-  ['-gv, --grep-invert <grep>', `Only run tests that do not match this regular expression`],
-  ['--headed', `Run tests in headed browsers (default: headless)`],
-  ['--ignore-snapshots', `Ignore screenshot and snapshot expectations`],
-  ['--last-failed', `Only re-run the failures`],
-  ['--last-run-file <file>', `Path to a json file where the last run information is read from and written to (default: test-results/.last-run.json)`],
-  ['--list', `Collect all the tests and report them, but do not run`],
-  ['--max-failures <N>', `Stop after the first N failures`],
-  ['--no-deps', 'Do not run project dependencies'],
-  ['--output <dir>', `Folder for output artifacts (default: "test-results")`],
-  ['--only-changed [ref]', `Only run test files that have been changed between 'HEAD' and 'ref'. Defaults to running all uncommitted changes. Only supports Git.`],
-  ['--pass-with-no-tests', `Makes test run succeed even if no tests were found`],
-  ['--project <project-name...>', `Only run tests from the specified list of projects, supports '*' wildcard (default: run all projects)`],
-  ['--quiet', `Suppress stdio`],
-  ['--repeat-each <N>', `Run each test N times (default: 1)`],
-  ['--reporter <reporter>', `Reporter to use, comma-separated, can be ${builtInReporters.map(name => `"${name}"`).join(', ')} (default: "${defaultReporter}")`],
-  ['--retries <retries>', `Maximum retry count for flaky tests, zero for no retries (default: no retries)`],
-  ['--shard <shard>', `Shard tests and execute only the selected shard, specify in the form "current/all", 1-based, for example "3/5"`],
-  ['--sharding-mode <mode>', `Sharding algorithm to use; "partition", "round-robin" or "duration-round-robin". Defaults to "partition".`],
-  ['--timeout <timeout>', `Specify test timeout threshold in milliseconds, zero for unlimited (default: ${defaultTimeout})`],
-  ['--trace <mode>', `Force tracing mode, can be ${kTraceModes.map(mode => `"${mode}"`).join(', ')}`],
-  ['--tsconfig <path>', `Path to a single tsconfig applicable to all imported files (default: look up tsconfig for each imported file separately)`],
-  ['--ui', `Run tests in interactive UI mode`],
-  ['--ui-host <host>', 'Host to serve UI on; specifying this option opens UI in a browser tab'],
-  ['--ui-port <port>', 'Port to serve UI on, 0 for any free port; specifying this option opens UI in a browser tab'],
-  ['-u, --update-snapshots', `Update snapshots with actual results (default: only create missing snapshots)`],
-  ['-j, --workers <workers>', `Number of concurrent workers or percentage of logical CPU cores, use 1 to run in a single worker (default: 50%)`],
-  ['-x', `Stop after the first failure`],
+// Note: update docs/src/test-cli-js.md when you update this, program is the source of truth.
+
+const testOptions: [string, { description: string, choices?: string[], preset?: string }][] = [
+  /* deprecated */ ['--browser <browser>', { description: `Browser to use for tests, one of "all", "chromium", "firefox" or "webkit" (default: "chromium")` }],
+  ['-c, --config <file>', { description: `Configuration file, or a test directory with optional "playwright.config.{m,c}?{js,ts}"` }],
+  ['--debug', { description: `Run tests with Playwright Inspector. Shortcut for "PWDEBUG=1" environment variable and "--timeout=0 --max-failures=1 --headed --workers=1" options` }],
+  ['--fail-on-flaky-tests', { description: `Fail if any test is flagged as flaky (default: false)` }],
+  ['--forbid-only', { description: `Fail if test.only is called (default: false)` }],
+  ['--fully-parallel', { description: `Run all tests in parallel (default: false)` }],
+  ['--global-timeout <timeout>', { description: `Maximum time this test suite can run in milliseconds (default: unlimited)` }],
+  ['-g, --grep <grep>', { description: `Only run tests matching this regular expression (default: ".*")` }],
+  ['--grep-invert <grep>', { description: `Only run tests that do not match this regular expression` }],
+  ['--headed', { description: `Run tests in headed browsers (default: headless)` }],
+  ['--ignore-snapshots', { description: `Ignore screenshot and snapshot expectations` }],
+  ['--last-failed', { description: `Only re-run the failures` }],
+  ['--last-run-file <file>', { description: `Path to a json file where the last run information is read from and written to (default: test-results/.last-run.json)` }],
+  ['--list', { description: `Collect all the tests and report them, but do not run` }],
+  ['--max-failures <N>', { description: `Stop after the first N failures` }],
+  ['--no-deps', { description: `Do not run project dependencies` }],
+  ['--output <dir>', { description: `Folder for output artifacts (default: "test-results")` }],
+  ['--only-changed [ref]', { description: `Only run test files that have been changed between 'HEAD' and 'ref'. Defaults to running all uncommitted changes. Only supports Git.` }],
+  ['--pass-with-no-tests', { description: `Makes test run succeed even if no tests were found` }],
+  ['--project <project-name...>', { description: `Only run tests from the specified list of projects, supports '*' wildcard (default: run all projects)` }],
+  ['--quiet', { description: `Suppress stdio` }],
+  ['--repeat-each <N>', { description: `Run each test N times (default: 1)` }],
+  ['--reporter <reporter>', { description: `Reporter to use, comma-separated, can be ${builtInReporters.map(name => `"${name}"`).join(', ')} (default: "${defaultReporter}")` }],
+  ['--retries <retries>', { description: `Maximum retry count for flaky tests, zero for no retries (default: no retries)` }],
+  ['--shard <shard>', { description: `Shard tests and execute only the selected shard, specify in the form "current/all", 1-based, for example "3/5"` }],
+  ['--sharding-mode <mode>', { description: `Sharding algorithm to use; "partition", "round-robin" or "duration-round-robin". Defaults to "partition".`, choices: shardingModes as string[] }],
+  ['--timeout <timeout>', { description: `Specify test timeout threshold in milliseconds, zero for unlimited (default: ${defaultTimeout})` }],
+  ['--trace <mode>', { description: `Force tracing mode`, choices: kTraceModes as string[] }],
+  ['--tsconfig <path>', { description: `Path to a single tsconfig applicable to all imported files (default: look up tsconfig for each imported file separately)` }],
+  ['--ui', { description: `Run tests in interactive UI mode` }],
+  ['--ui-host <host>', { description: `Host to serve UI on; specifying this option opens UI in a browser tab` }],
+  ['--ui-port <port>', { description: `Port to serve UI on, 0 for any free port; specifying this option opens UI in a browser tab` }],
+  ['-u, --update-snapshots [mode]', { description: `Update snapshots with actual results. Running tests without the flag defaults to "missing"`, choices: ['all', 'changed', 'missing', 'none'], preset: 'changed' }],
+  ['--update-source-method <method>', { description: `Chooses the way source is updated (default: "patch")`, choices: ['overwrite', '3way', 'patch'] }],
+  ['-j, --workers <workers>', { description: `Number of concurrent workers or percentage of logical CPU cores, use 1 to run in a single worker (default: 50%)` }],
+  ['-x', { description: `Stop after the first failure` }],
 ];
 
 addTestCommand(program);

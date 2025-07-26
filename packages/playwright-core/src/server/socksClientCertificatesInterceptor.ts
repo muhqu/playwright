@@ -14,20 +14,22 @@
  * limitations under the License.
  */
 
-import net from 'net';
-import http2 from 'http2';
-import type https from 'https';
-import tls from 'tls';
-import stream from 'stream';
-import { createSocket, createTLSSocket } from '../utils/happy-eyeballs';
-import { escapeHTML, generateSelfSignedCertificate, ManualPromise, rewriteErrorMessage } from '../utils';
-import type { SocksSocketClosedPayload, SocksSocketDataPayload, SocksSocketRequestedPayload } from '../common/socksProxy';
-import { SocksProxy } from '../common/socksProxy';
-import type * as types from './types';
-import { debugLogger } from '../utils/debugLogger';
-import { createProxyAgent } from './fetch';
 import { EventEmitter } from 'events';
+import http2 from 'http2';
+import net from 'net';
+import stream from 'stream';
+import tls from 'tls';
+
+import { SocksProxy } from './utils/socksProxy';
+import { ManualPromise, escapeHTML, generateSelfSignedCertificate, rewriteErrorMessage } from '../utils';
 import { verifyClientCertificates } from './browserContext';
+import { createProxyAgent } from './utils/network';
+import { debugLogger } from './utils/debugLogger';
+import { createSocket, createTLSSocket } from './utils/happyEyeballs';
+
+import type * as types from './types';
+import type { SocksSocketClosedPayload, SocksSocketDataPayload, SocksSocketRequestedPayload } from './utils/socksProxy';
+import type https from 'https';
 
 let dummyServerTlsOptions: tls.TlsOptions | undefined = undefined;
 function loadDummyServerCertsIfNeeded() {
@@ -240,15 +242,15 @@ export class ClientCertificatesProxy {
   ignoreHTTPSErrors: boolean | undefined;
   secureContextMap: Map<string, tls.SecureContext> = new Map();
   alpnCache: ALPNCache;
-  proxyAgentFromOptions: ReturnType<typeof createProxyAgent> | undefined;
+  proxyAgentFromOptions: ReturnType<typeof createProxyAgent>;
 
-  constructor(
+  private constructor(
     contextOptions: Pick<types.BrowserContextOptions, 'clientCertificates' | 'ignoreHTTPSErrors' | 'proxy'>
   ) {
     verifyClientCertificates(contextOptions.clientCertificates);
     this.alpnCache = new ALPNCache();
     this.ignoreHTTPSErrors = contextOptions.ignoreHTTPSErrors;
-    this.proxyAgentFromOptions = contextOptions.proxy ? createProxyAgent(contextOptions.proxy) : undefined;
+    this.proxyAgentFromOptions = createProxyAgent(contextOptions.proxy);
     this._initSecureContexts(contextOptions.clientCertificates);
     this._socksProxy = new SocksProxy();
     this._socksProxy.setPattern('*');
@@ -292,9 +294,14 @@ export class ClientCertificatesProxy {
     }
   }
 
-  public async listen() {
-    const port = await this._socksProxy.listen(0, '127.0.0.1');
-    return { server: `socks5://127.0.0.1:${port}` };
+  public static async create(contextOptions: Pick<types.BrowserContextOptions, 'clientCertificates' | 'ignoreHTTPSErrors' | 'proxy'>) {
+    const proxy = new ClientCertificatesProxy(contextOptions);
+    await proxy._socksProxy.listen(0, '127.0.0.1');
+    return proxy;
+  }
+
+  public proxySettings(): types.ProxySettings {
+    return { server: `socks5://127.0.0.1:${this._socksProxy.port()}` };
   }
 
   public async close() {

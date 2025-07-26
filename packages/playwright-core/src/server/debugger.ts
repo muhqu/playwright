@@ -15,10 +15,12 @@
  */
 
 import { EventEmitter } from 'events';
+
 import { debugMode, isUnderTest, monotonicTime } from '../utils';
 import { BrowserContext } from './browserContext';
+import { methodMetainfo } from '../utils/isomorphic/protocolMetainfo';
+
 import type { CallMetadata, InstrumentationListener, SdkObject } from './instrumentation';
-import { commandsWithTracingSnapshots, pausesBeforeInputActions, slowMoActions } from '../protocol/debug';
 
 const symbol = Symbol('Debugger');
 
@@ -129,19 +131,23 @@ function shouldPauseOnCall(sdkObject: SdkObject, metadata: CallMetadata): boolea
 
 function shouldPauseBeforeStep(metadata: CallMetadata): boolean {
   // Don't stop on internal.
-  if (!metadata.apiName)
+  if (metadata.internal)
     return false;
   // Always stop on 'close'
   if (metadata.method === 'close')
     return true;
-  if (metadata.method === 'waitForSelector' || metadata.method === 'waitForEventInfo')
+  if (metadata.method === 'waitForSelector' || metadata.method === 'waitForEventInfo' || metadata.method === 'querySelector' || metadata.method === 'querySelectorAll')
     return false;  // Never stop on those, primarily for the test harness.
   const step = metadata.type + '.' + metadata.method;
   // Stop before everything that generates snapshot. But don't stop before those marked as pausesBeforeInputActions
   // since we stop in them on a separate instrumentation signal.
-  return commandsWithTracingSnapshots.has(step) && !pausesBeforeInputActions.has(metadata.type + '.' + metadata.method);
+  const metainfo = methodMetainfo.get(step);
+  if (metainfo?.internal)
+    return false;
+  return !!metainfo?.snapshot && !metainfo.pausesBeforeInput;
 }
 
 export function shouldSlowMo(metadata: CallMetadata): boolean {
-  return slowMoActions.has(metadata.type + '.' + metadata.method);
+  const metainfo = methodMetainfo.get(metadata.type + '.' + metadata.method);
+  return !!metainfo?.slowMo;
 }

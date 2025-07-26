@@ -114,6 +114,47 @@ test('should show console messages for test', async ({ runUITest }, testInfo) =>
   await expect.soft(page.getByText('GREEN', { exact: true })).toHaveCSS('color', 'rgb(0, 188, 0)');
 });
 
+test('should collapse repeated console messages for test', async ({ runUITest }) => {
+  const { page } = await runUITest({
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('print', async ({ page }) => {
+        await page.evaluate(() => {
+          console.log('page message')
+          for (let i = 0; i < 10; ++i)
+            console.log('page message')
+        });
+        for (let i = 0; i < 10; ++i)
+          console.log('node message')
+        await page.evaluate(async () => {
+          await new Promise(resolve => {
+            for (let i = 0; i < 10; ++i)
+              console.log('page message')
+            window.builtins.setTimeout(() => {
+              for (let i = 0; i < 10; ++i)
+                console.log('page message')
+              resolve()
+            }, 1500)
+          })
+        });
+      });
+    `,
+  });
+  await page.getByTitle('Run all').click();
+  await page.getByRole('tab', { name: 'Console' }).click();
+  await page.getByText('print').click();
+
+  await expect(page.getByRole('tabpanel', { name: 'Console' })).toMatchAriaSnapshot(`
+    - tabpanel "Console":
+      - list:
+        - listitem: /page message/
+        - listitem: /10 page message/
+        - listitem: /10 node message/
+        - listitem: /10 page message/
+        - listitem: /10 page message/
+  `);
+});
+
 test('should format console messages in page', async ({ runUITest }, testInfo) => {
   const { page } = await runUITest({
     'a.spec.ts': `
@@ -145,6 +186,17 @@ test('should format console messages in page', async ({ runUITest }, testInfo) =
     'Failed to load resource: net::ERR_CONNECTION_REFUSED',
   ]);
 
+  await expect(page.locator('.console-tab')).toMatchAriaSnapshot(`
+    - list:
+      - listitem: "/<anonymous>:1 Object {a: 1}/"
+      - listitem: "/<anonymous>:4 Date/"
+      - listitem: "/<anonymous>:5 Regex \/a\//"
+      - listitem: "/<anonymous>:6 Number 0 one 2/"
+      - listitem: "/<anonymous>:7 Download the React DevTools for a better development experience: https:\/\/fb\.me\/react-devtools/"
+      - listitem: "/<anonymous>:8 Array of values/"
+      - listitem: "/Failed to load resource: net::ERR_CONNECTION_REFUSED/"
+  `);
+
   const label = page.getByText('React DevTools');
   await expect(label).toHaveCSS('color', 'rgb(255, 0, 0)');
   await expect(label).toHaveCSS('font-weight', '700');
@@ -164,7 +216,7 @@ test('should stream console messages live', async ({ runUITest }) => {
         await page.setContent('<button>Click me</button>');
         const button = page.getByRole('button', { name: 'Click me' });
         await button.evaluate(node => node.addEventListener('click', () => {
-          builtinSetTimeout(() => { console.log('I was clicked'); }, 1000);
+          window.builtins.setTimeout(() => { console.log('I was clicked'); }, 1000);
         }));
         console.log('I was logged');
         await button.click();

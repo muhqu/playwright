@@ -8,9 +8,9 @@ const Ci = Components.interfaces;
 const Cr = Components.results;
 const Cu = Components.utils;
 
-const {Helper} = ChromeUtils.import('chrome://juggler/content/Helper.js');
-const {NetUtil} = ChromeUtils.import('resource://gre/modules/NetUtil.jsm');
-const {setTimeout} = ChromeUtils.import('resource://gre/modules/Timer.jsm');
+const {Helper} = ChromeUtils.importESModule('chrome://juggler/content/Helper.js');
+const {NetUtil} = ChromeUtils.importESModule('resource://gre/modules/NetUtil.sys.mjs');
+const {setTimeout} = ChromeUtils.importESModule('resource://gre/modules/Timer.sys.mjs');
 
 const dragService = Cc["@mozilla.org/widget/dragservice;1"].getService(
   Ci.nsIDragService
@@ -51,7 +51,7 @@ class WorkerData {
   }
 }
 
-class PageAgent {
+export class PageAgent {
   constructor(browserChannel, frameTree) {
     this._browserChannel = browserChannel;
     this._browserPage = browserChannel.connect('page');
@@ -120,7 +120,8 @@ class PageAgent {
           // After the dragStart event is dispatched and handled by Web,
           // it might or might not create a new drag session, depending on its preventing default.
           setTimeout(() => {
-            this._browserPage.emit('pageInputEvent', { type: 'juggler-drag-finalized', dragSessionStarted: !!dragService.getCurrentSession() });
+            const session = this._getCurrentDragSession();
+            this._browserPage.emit('pageInputEvent', { type: 'juggler-drag-finalized', dragSessionStarted: !!session });
           }, 0);
         }
       }),
@@ -526,8 +527,14 @@ class PageAgent {
     });
   }
 
+  _getCurrentDragSession() {
+    const frame = this._frameTree.mainFrame();
+    const domWindow = frame?.domWindow();
+    return domWindow ? dragService.getCurrentSession(domWindow) : undefined;
+  }
+
   async _dispatchDragEvent({type, x, y, modifiers}) {
-    const session = dragService.getCurrentSession();
+    const session = this._getCurrentDragSession();
     const dropEffect = session.dataTransfer.dropEffect;
 
     if ((type === 'drop' && dropEffect !== 'none') || type ===  'dragover') {
@@ -551,9 +558,8 @@ class PageAgent {
       return;
     }
     if (type === 'dragend') {
-      const session = dragService.getCurrentSession();
-      if (session)
-        dragService.endDragSession(true);
+      const session = this._getCurrentDragSession();
+      session?.endDragSession(true);
       return;
     }
   }
@@ -569,7 +575,7 @@ class PageAgent {
     // We crash by using js-ctypes and dereferencing
     // a bad pointer. The crash should happen immediately
     // upon loading this frame script.
-    const { ctypes } = ChromeUtils.import('resource://gre/modules/ctypes.jsm');
+    const { ctypes } = ChromeUtils.importESModule('resource://gre/modules/ctypes.sys.mjs');
     ChromeUtils.privateNoteIntentionalCrash();
     const zero = new ctypes.intptr_t(8);
     const badptr = ctypes.cast(zero, ctypes.PointerType(ctypes.int32_t));
@@ -702,7 +708,4 @@ class PageAgent {
     };
   }
 }
-
-var EXPORTED_SYMBOLS = ['PageAgent'];
-this.PageAgent = PageAgent;
 

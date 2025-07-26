@@ -20,7 +20,7 @@ import '@web/common.css';
 import '@web/third_party/vscode/codicon.css';
 import type * as reporterTypes from 'playwright/types/testReporter';
 import React from 'react';
-import type { ContextEntry } from '../entries';
+import type { ContextEntry } from '../types/entries';
 import type { SourceLocation } from './modelUtil';
 import { MultiTraceModel } from './modelUtil';
 import { Workbench } from './workbench';
@@ -32,7 +32,7 @@ export const TraceView: React.FC<{
   revealSource?: boolean,
   pathSeparator: string,
 }> = ({ item, rootDir, onOpenExternally, revealSource, pathSeparator }) => {
-  const [model, setModel] = React.useState<{ model: MultiTraceModel, isLive: boolean } | undefined>();
+  const [model, setModel] = React.useState<{ model: MultiTraceModel, isLive: boolean } | undefined>(undefined);
   const [counter, setCounter] = React.useState(0);
   const pollTimer = React.useRef<NodeJS.Timeout | null>(null);
 
@@ -75,7 +75,9 @@ export const TraceView: React.FC<{
         const model = await loadSingleTraceFile(traceLocation);
         setModel({ model, isLive: true });
       } catch {
-        setModel(undefined);
+        const model = new MultiTraceModel([]);
+        model.errorDescriptors.push(...result.errors.flatMap(error => !!error.message ? [{ message: error.message }] : []));
+        setModel({ model, isLive: false });
       } finally {
         setCounter(counter + 1);
       }
@@ -94,7 +96,7 @@ export const TraceView: React.FC<{
     fallbackLocation={item.testFile}
     isLive={model?.isLive}
     status={item.treeItem?.status}
-    annotations={item.testCase?.annotations || []}
+    annotations={item.testCase?.annotations ?? []}
     onOpenExternally={onOpenExternally}
     revealSource={revealSource}
   />;
@@ -111,6 +113,7 @@ const outputDirForTestCase = (testCase: reporterTypes.TestCase): string | undefi
 async function loadSingleTraceFile(url: string): Promise<MultiTraceModel> {
   const params = new URLSearchParams();
   params.set('trace', url);
+  params.set('limit', '1');
   const response = await fetch(`contexts?${params.toString()}`);
   const contextEntries = await response.json() as ContextEntry[];
   return new MultiTraceModel(contextEntries);

@@ -24,6 +24,7 @@ test('should filter network requests by resource type', async ({ runUITest, serv
       import { test, expect } from '@playwright/test';
       test('network tab test', async ({ page }) => {
         await page.goto('${server.PREFIX}/network-tab/network.html');
+        await page.evaluate(() => (window as any).donePromise);
       });
     `,
   });
@@ -31,7 +32,7 @@ test('should filter network requests by resource type', async ({ runUITest, serv
   await page.getByText('network tab test').dblclick();
   await page.getByText('Network', { exact: true }).click();
 
-  const networkItems = page.getByTestId('network-list').getByRole('listitem');
+  const networkItems = page.getByRole('list', { name: 'Network requests' }).getByRole('listitem');
 
   await page.getByText('JS', { exact: true }).click();
   await expect(networkItems).toHaveCount(1);
@@ -64,6 +65,7 @@ test('should filter network requests by url', async ({ runUITest, server }) => {
       import { test, expect } from '@playwright/test';
       test('network tab test', async ({ page }) => {
         await page.goto('${server.PREFIX}/network-tab/network.html');
+        await page.evaluate(() => (window as any).donePromise);
       });
     `,
   });
@@ -71,7 +73,7 @@ test('should filter network requests by url', async ({ runUITest, server }) => {
   await page.getByText('network tab test').dblclick();
   await page.getByText('Network', { exact: true }).click();
 
-  const networkItems = page.getByTestId('network-list').getByRole('listitem');
+  const networkItems = page.getByRole('list', { name: 'Network requests' }).getByRole('listitem');
 
   await page.getByPlaceholder('Filter network').fill('script.');
   await expect(networkItems).toHaveCount(1);
@@ -100,6 +102,7 @@ test('should format JSON request body', async ({ runUITest, server }) => {
       import { test, expect } from '@playwright/test';
       test('network tab test', async ({ page }) => {
         await page.goto('${server.PREFIX}/network-tab/network.html');
+        await page.evaluate(() => (window as any).donePromise);
       });
     `,
   });
@@ -109,7 +112,7 @@ test('should format JSON request body', async ({ runUITest, server }) => {
 
   await page.getByText('post-data-1').click();
 
-  await expect(page.locator('.CodeMirror-code .CodeMirror-line').allInnerTexts()).resolves.toEqual([
+  await expect(page.locator('.CodeMirror-code .CodeMirror-line')).toHaveText([
     '{',
     '  "data": {',
     '    "key": "value",',
@@ -119,11 +122,11 @@ test('should format JSON request body', async ({ runUITest, server }) => {
     '    ]',
     '  }',
     '}',
-  ]);
+  ], { useInnerText: true });
 
   await page.getByText('post-data-2').click();
 
-  await expect(page.locator('.CodeMirror-code .CodeMirror-line').allInnerTexts()).resolves.toEqual([
+  await expect(page.locator('.CodeMirror-code .CodeMirror-line')).toHaveText([
     '{',
     '  "data": {',
     '    "key": "value",',
@@ -133,7 +136,7 @@ test('should format JSON request body', async ({ runUITest, server }) => {
     '    ]',
     '  }',
     '}',
-  ]);
+  ], { useInnerText: true });
 });
 
 test('should display list of query parameters (only if present)', async ({ runUITest, server }) => {
@@ -142,6 +145,7 @@ test('should display list of query parameters (only if present)', async ({ runUI
       import { test, expect } from '@playwright/test';
       test('network tab test', async ({ page }) => {
         await page.goto('${server.PREFIX}/network-tab/network.html');
+        await page.evaluate(() => (window as any).donePromise);
       });
     `,
   });
@@ -159,4 +163,40 @@ test('should display list of query parameters (only if present)', async ({ runUI
   await page.getByText('endpoint').click();
 
   await expect(page.getByText('Query String Parameters')).not.toBeVisible();
+});
+
+test('should not duplicate network entries from beforeAll', {
+  annotation: [
+    { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/34404' },
+    { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/33106' },
+  ]
+}, async ({ runUITest, server }) => {
+  const { page } = await runUITest({
+    'playwright.config.ts': `
+      module.exports = { use: { trace: 'on' } };
+    `,
+    'a.spec.ts': `
+      import { test as base, expect, request, type APIRequestContext } from '@playwright/test';
+
+      const test = base.extend<{}, { apiRequest: APIRequestContext }>({
+        apiRequest: [async ({ }, use) => {
+          const apiContext = await request.newContext();
+          await use(apiContext);
+          await apiContext.dispose();
+        }, { scope: 'worker' }]
+      });
+
+      test.beforeAll(async ({ apiRequest }) => {
+        await apiRequest.get("${server.EMPTY_PAGE}");
+      });
+
+      test('first test', async ({ }) => { });
+
+      test.afterAll(async ({ apiRequest }) => { });
+    `,
+  });
+
+  await page.getByText('first test').dblclick();
+  await page.getByText('Network', { exact: true }).click();
+  await expect(page.getByRole('list', { name: 'Network requests' }).getByText('empty.html')).toHaveCount(1);
 });

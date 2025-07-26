@@ -22,8 +22,8 @@ import debugLogger from 'debug';
 import { Registry }  from './registry';
 import type { CommonFixtures, CommonWorkerFixtures } from '../config/commonFixtures';
 import { commonFixtures } from '../config/commonFixtures';
-import { removeFolders } from '../../packages/playwright-core/lib/utils/fileUtils';
-import { spawnAsync } from '../../packages/playwright-core/lib/utils/spawnAsync';
+import { removeFolders } from '../../packages/playwright-core/lib/server/utils/fileUtils';
+import { spawnAsync } from '../../packages/playwright-core/lib/server/utils/spawnAsync';
 import type { SpawnOptions } from 'child_process';
 
 export const TMP_WORKSPACES = path.join(os.platform() === 'darwin' ? '/tmp' : os.tmpdir(), 'pwt', 'workspaces');
@@ -31,16 +31,22 @@ export const TMP_WORKSPACES = path.join(os.platform() === 'darwin' ? '/tmp' : os
 const debug = debugLogger('itest');
 
 const expect = _expect.extend({
-  toHaveLoggedSoftwareDownload(received: any, browsers: ('chromium' | 'firefox' | 'webkit' | 'ffmpeg')[]) {
+  toHaveLoggedSoftwareDownload(received: string, browsers: ('chromium' | 'chromium-headless-shell' | 'firefox' | 'webkit' | 'winldd' |'ffmpeg')[]) {
     if (typeof received !== 'string')
       throw new Error(`Expected argument to be a string.`);
 
     const downloaded = new Set();
-    for (const [, browser] of received.matchAll(/^.*(chromium|firefox|webkit|ffmpeg).*playwright build v\d+\)? downloaded.*$/img))
-      downloaded.add(browser.toLowerCase());
+    let index = 0;
+    while (true) {
+      const match = received.substring(index).match(/(chromium|chromium headless shell|firefox|webkit|winldd|ffmpeg)[\s\d\.]+\(?playwright build v\d+\)? downloaded/im);
+      if (!match)
+        break;
+      downloaded.add(match[1].replace(/\s/g, '-').toLowerCase());
+      index += match.index + 1;
+    }
 
-    const expected = browsers;
-    if (expected.length === downloaded.size && expected.every(browser => downloaded.has(browser))) {
+    const expected = new Set(browsers);
+    if (expected.size === downloaded.size && [...expected].every(browser => downloaded.has(browser))) {
       return {
         pass: true,
         message: () => 'Expected not to download browsers, but did.'
@@ -69,7 +75,7 @@ type NPMTestFixtures = {
   _auto: void;
   _browsersPath: string;
   tmpWorkspace: string;
-  installedSoftwareOnDisk: () => Promise<string[]>;
+  checkInstalledSoftwareOnDisk: (browsers: string[]) => Promise<void>;
   writeFiles: (nameToContents: Record<string, string>) => Promise<void>;
   exec: (cmd: string, ...argsAndOrOptions: ArgsOrOptions) => Promise<string>;
   tsc: (args: string) => Promise<string>;
@@ -101,6 +107,8 @@ export const test = _test
         const npmLines = [
           `registry = ${registry.url()}/`,
           `cache = ${testInfo.outputPath('npm_cache')}`,
+          // Required after https://github.com/npm/cli/pull/8185.
+          'replace-registry-host=never',
         ];
         if (!allowGlobalInstall) {
           yarnLines.push(`prefix "${testInfo.outputPath('npm_global')}"`);
@@ -128,7 +136,7 @@ export const test = _test
       tmpWorkspace: async ({}, use) => {
         // We want a location that won't have a node_modules dir anywhere along its path
         const tmpWorkspace = path.join(TMP_WORKSPACES, path.basename(test.info().outputDir));
-        await fs.promises.mkdir(tmpWorkspace);
+        await fs.promises.mkdir(tmpWorkspace, { recursive: true });
         debug(`Workspace Folder: ${tmpWorkspace}`);
         await use(tmpWorkspace);
       },
@@ -140,19 +148,21 @@ export const test = _test
         await use(registry);
         await registry.shutdown();
       },
-      installedSoftwareOnDisk: async ({ isolateBrowsers, _browsersPath }, use) => {
-        if (!isolateBrowsers)
-          throw new Error(`Test that checks browser installation must set "isolateBrowsers" to true`);
-        await use(async () => fs.promises.readdir(_browsersPath).catch(() => []).then(files => files.map(f => f.split('-')[0]).filter(f => !f.startsWith('.'))));
+      checkInstalledSoftwareOnDisk: async ({ isolateBrowsers, _browsersPath }, use) => {
+        await use(async expected => {
+          if (!isolateBrowsers)
+            throw new Error(`Test that checks browser installation must set "isolateBrowsers" to true`);
+          const actual = await fs.promises.readdir(_browsersPath).catch(() => []).then(files => files.map(f => f.split('-')[0].replace(/_/g, '-')).filter(f => !f.startsWith('.')));
+          expect(new Set(actual)).toEqual(new Set(expected));
+        });
       },
       exec: async ({ tmpWorkspace, _browsersPath, isolateBrowsers }, use, testInfo) => {
         await use(async (cmd: string, ...argsAndOrOptions: [] | [...string[]] | [...string[], ExecOptions] | [ExecOptions]) => {
-          let args: string[] = [];
           let options: ExecOptions = {};
           if (typeof argsAndOrOptions[argsAndOrOptions.length - 1] === 'object')
             options = argsAndOrOptions.pop() as ExecOptions;
 
-          args = argsAndOrOptions as string[];
+          const command = [cmd, ...argsAndOrOptions].join(' ');
 
           let result!: {stdout: string, stderr: string, code: number | null, error?: Error};
           const cwd = options.cwd ?? tmpWorkspace;
@@ -165,11 +175,10 @@ export const test = _test
             ...(isolateBrowsers ? { PLAYWRIGHT_BROWSERS_PATH: _browsersPath } : {}),
             ...options.env,
           };
-          await test.step(`exec: ${[cmd, ...args].join(' ')}`, async () => {
-            result = await spawnAsync(cmd, args, { shell: true, cwd, env });
+          await test.step(`exec: ${command}`, async () => {
+            result = await spawnAsync(command, { shell: true, cwd, env });
           });
 
-          const command = [cmd, ...args].join(' ');
           const stdio = result.stdout + result.stderr;
           const commandEnv = Object.entries(env).map(e => `${e[0]}=${e[1]}`).join(' ');
           const fullCommand = `cd ${cwd} && ${commandEnv} ${command}`;

@@ -16,7 +16,8 @@
 
 /* eslint-disable no-console */
 
-import { getPackageManager, gracefullyProcessExitDoNotHang } from '../utils';
+import { gracefullyProcessExitDoNotHang } from '../server/utils/processLauncher';
+import { getPackageManager } from '../utils';
 import { program } from './program';
 export { program } from './program';
 
@@ -54,7 +55,9 @@ const kExternalPlaywrightTestCommands = [
 ];
 function addExternalPlaywrightTestCommands() {
   for (const [command, description] of kExternalPlaywrightTestCommands) {
-    const playwrightTest = program.command(command).allowUnknownOption(true);
+    const playwrightTest = program.command(command)
+        .allowUnknownOption(true)
+        .allowExcessArguments(true);
     playwrightTest.description(`${description} Available in @playwright/test package.`);
     playwrightTest.action(async () => {
       printPlaywrightTestError(command);

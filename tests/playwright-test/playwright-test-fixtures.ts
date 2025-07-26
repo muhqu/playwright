@@ -48,7 +48,7 @@ export type RunResult = {
   interrupted: number,
   didNotRun: number,
   report: JSONReport,
-  results: any[],
+  results: JSONReportTestResult[],
 };
 
 type TSCResult = {
@@ -222,13 +222,16 @@ export function cleanEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     CI_COMMIT_SHA: undefined,
     CI_JOB_URL: undefined,
     CI_PROJECT_URL: undefined,
+    GITHUB_ACTIONS: undefined,
     GITHUB_REPOSITORY: undefined,
     GITHUB_RUN_ID: undefined,
     GITHUB_SERVER_URL: undefined,
     GITHUB_SHA: undefined,
+    GITHUB_EVENT_PATH: undefined,
     // END: Reserved CI
     PW_TEST_HTML_REPORT_OPEN: undefined,
     PLAYWRIGHT_HTML_OPEN: undefined,
+    PW_TEST_DEBUG_REPORTERS: undefined,
     PW_TEST_REPORTER: undefined,
     PW_TEST_REPORTER_WS_ENDPOINT: undefined,
     PW_TEST_SOURCE_TRANSFORM: undefined,

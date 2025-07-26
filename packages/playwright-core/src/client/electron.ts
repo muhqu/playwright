@@ -14,22 +14,24 @@
  * limitations under the License.
  */
 
-import type { BrowserWindow } from 'electron';
-import type * as childProcess from 'child_process';
-import type * as structs from '../../types/structs';
-import type * as api from '../../types/types';
-import type * as channels from '@protocol/channels';
-import { TimeoutSettings } from '../common/timeoutSettings';
 import { BrowserContext, prepareBrowserContextParams } from './browserContext';
 import { ChannelOwner } from './channelOwner';
 import { envObjectToArray } from './clientHelper';
+import { ConsoleMessage } from './consoleMessage';
+import { TargetClosedError, isTargetClosedError } from './errors';
 import { Events } from './events';
 import { JSHandle, parseResult, serializeArgument } from './jsHandle';
-import type { Page } from './page';
-import { ConsoleMessage } from './consoleMessage';
-import type { Env, WaitForEventOptions, Headers, BrowserContextOptions } from './types';
 import { Waiter } from './waiter';
-import { TargetClosedError, isTargetClosedError } from './errors';
+import { TimeoutSettings } from './timeoutSettings';
+
+import type { Page } from './page';
+import type { BrowserContextOptions, Env, Headers, WaitForEventOptions } from './types';
+import type * as structs from '../../types/structs';
+import type * as api from '../../types/types';
+import type * as channels from '@protocol/channels';
+import type * as childProcess from 'child_process';
+import type { BrowserWindow } from 'electron';
+import type { Playwright } from './playwright';
 
 type ElectronOptions = Omit<channels.ElectronLaunchOptions, 'env'|'extraHTTPHeaders'|'recordHar'|'colorScheme'|'acceptDownloads'> & {
   env?: Env,
@@ -37,11 +39,14 @@ type ElectronOptions = Omit<channels.ElectronLaunchOptions, 'env'|'extraHTTPHead
   recordHar?: BrowserContextOptions['recordHar'],
   colorScheme?: 'dark' | 'light' | 'no-preference' | null,
   acceptDownloads?: boolean,
+  timeout?: number,
 };
 
 type ElectronAppType = typeof import('electron');
 
 export class Electron extends ChannelOwner<channels.ElectronChannel> implements api.Electron {
+  _playwright!: Playwright;
+
   static from(electron: channels.ElectronChannel): Electron {
     return (electron as any)._object;
   }
@@ -51,13 +56,18 @@ export class Electron extends ChannelOwner<channels.ElectronChannel> implements 
   }
 
   async launch(options: ElectronOptions = {}): Promise<ElectronApplication> {
+    options = this._playwright.selectors._withSelectorOptions(options);
     const params: channels.ElectronLaunchParams = {
-      ...await prepareBrowserContextParams(options),
-      env: envObjectToArray(options.env ? options.env : process.env),
+      ...await prepareBrowserContextParams(this._platform, options),
+      env: envObjectToArray(options.env ? options.env : this._platform.env),
       tracesDir: options.tracesDir,
+      timeout: new TimeoutSettings(this._platform).launchTimeout(options),
     };
     const app = ElectronApplication.from((await this._channel.launch(params)).electronApplication);
-    app._context._setOptions(params, options);
+    this._playwright.selectors._contextsForSelectors.add(app._context);
+    app.once(Events.ElectronApplication.Close, () => this._playwright.selectors._contextsForSelectors.delete(app._context));
+    await app._context._initializeHarFromOptions(options.recordHar);
+    app._context.tracing._tracesDir = options.tracesDir;
     return app;
   }
 }
@@ -65,7 +75,7 @@ export class Electron extends ChannelOwner<channels.ElectronChannel> implements 
 export class ElectronApplication extends ChannelOwner<channels.ElectronApplicationChannel> implements api.ElectronApplication {
   readonly _context: BrowserContext;
   private _windows = new Set<Page>();
-  private _timeoutSettings = new TimeoutSettings();
+  private _timeoutSettings: TimeoutSettings;
 
   static from(electronApplication: channels.ElectronApplicationChannel): ElectronApplication {
     return (electronApplication as any)._object;
@@ -73,6 +83,8 @@ export class ElectronApplication extends ChannelOwner<channels.ElectronApplicati
 
   constructor(parent: ChannelOwner, type: string, guid: string, initializer: channels.ElectronApplicationInitializer) {
     super(parent, type, guid, initializer);
+
+    this._timeoutSettings = new TimeoutSettings(this._platform);
     this._context = BrowserContext.from(initializer.context);
     for (const page of this._context._pages)
       this._onPage(page);
@@ -80,7 +92,7 @@ export class ElectronApplication extends ChannelOwner<channels.ElectronApplicati
     this._channel.on('close', () => {
       this.emit(Events.ElectronApplication.Close);
     });
-    this._channel.on('console', event => this.emit(Events.ElectronApplication.Console, new ConsoleMessage(event)));
+    this._channel.on('console', event => this.emit(Events.ElectronApplication.Console, new ConsoleMessage(this._platform, event)));
     this._setEventToSubscriptionMapping(new Map<string, channels.ElectronApplicationUpdateSubscriptionParams['event']>([
       [Events.ElectronApplication.Console, 'console'],
     ]));
@@ -103,7 +115,7 @@ export class ElectronApplication extends ChannelOwner<channels.ElectronApplicati
 
   async firstWindow(options?: { timeout?: number }): Promise<Page> {
     if (this._windows.size)
-      return this._windows.values().next().value;
+      return this._windows.values().next().value!;
     return await this.waitForEvent('window', options);
   }
 

@@ -14,18 +14,20 @@
  * limitations under the License.
  */
 
-import type * as channels from '@protocol/channels';
-import type { Tracing } from '../trace/recorder/tracing';
 import { ArtifactDispatcher } from './artifactDispatcher';
-import { Dispatcher, existingDispatcher } from './dispatcher';
+import { Dispatcher } from './dispatcher';
+
 import type { BrowserContextDispatcher } from './browserContextDispatcher';
 import type { APIRequestContextDispatcher } from './networkDispatchers';
+import type { Tracing } from '../trace/recorder/tracing';
+import type * as channels from '@protocol/channels';
+import type { Progress } from '@protocol/progress';
 
 export class TracingDispatcher extends Dispatcher<Tracing, channels.TracingChannel, BrowserContextDispatcher | APIRequestContextDispatcher> implements channels.TracingChannel {
   _type_Tracing = true;
 
   static from(scope: BrowserContextDispatcher | APIRequestContextDispatcher, tracing: Tracing): TracingDispatcher {
-    const result = existingDispatcher<TracingDispatcher>(tracing);
+    const result = scope.connection.existingDispatcher<TracingDispatcher>(tracing);
     return result || new TracingDispatcher(scope, tracing);
   }
 
@@ -33,21 +35,30 @@ export class TracingDispatcher extends Dispatcher<Tracing, channels.TracingChann
     super(scope, tracing, 'Tracing', {});
   }
 
-  async tracingStart(params: channels.TracingTracingStartParams): Promise<channels.TracingTracingStartResult> {
-    await this._object.start(params);
+  async tracingStart(params: channels.TracingTracingStartParams, progress: Progress): Promise<channels.TracingTracingStartResult> {
+    this._object.start(params);
   }
 
-  async tracingStartChunk(params: channels.TracingTracingStartChunkParams): Promise<channels.TracingTracingStartChunkResult> {
-    return await this._object.startChunk(params);
+  async tracingStartChunk(params: channels.TracingTracingStartChunkParams, progress: Progress): Promise<channels.TracingTracingStartChunkResult> {
+    return await this._object.startChunk(progress, params);
   }
 
-  async tracingStopChunk(params: channels.TracingTracingStopChunkParams): Promise<channels.TracingTracingStopChunkResult> {
-    const { artifact, entries } = await this._object.stopChunk(params);
+  async tracingGroup(params: channels.TracingTracingGroupParams, progress: Progress): Promise<channels.TracingTracingGroupResult> {
+    const { name, location } = params;
+    this._object.group(name, location, progress.metadata);
+  }
+
+  async tracingGroupEnd(params: channels.TracingTracingGroupEndParams, progress: Progress): Promise<channels.TracingTracingGroupEndResult> {
+    this._object.groupEnd();
+  }
+
+  async tracingStopChunk(params: channels.TracingTracingStopChunkParams, progress: Progress): Promise<channels.TracingTracingStopChunkResult> {
+    const { artifact, entries } = await this._object.stopChunk(progress, params);
     return { artifact: artifact ? ArtifactDispatcher.from(this, artifact) : undefined, entries };
   }
 
-  async tracingStop(params: channels.TracingTracingStopParams): Promise<channels.TracingTracingStopResult> {
-    await this._object.stop();
+  async tracingStop(params: channels.TracingTracingStopParams, progress: Progress): Promise<channels.TracingTracingStopResult> {
+    await this._object.stop(progress);
   }
 
 }

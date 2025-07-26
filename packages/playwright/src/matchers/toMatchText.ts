@@ -15,26 +15,28 @@
  */
 
 
-import { expectTypes, callLogText } from '../util';
+import { colors } from 'playwright-core/lib/utils';
+
+import { callLogText, expectTypes } from '../util';
 import {
   printReceivedStringContainExpectedResult,
   printReceivedStringContainExpectedSubstring
 } from './expect';
-import { EXPECTED_COLOR } from '../common/expectBundle';
-import type { ExpectMatcherState } from '../../types/test';
 import { kNoElementsFoundError, matcherHint } from './matcherHint';
+import { EXPECTED_COLOR } from '../common/expectBundle';
+
 import type { MatcherResult } from './matcherHint';
-import type { Locator } from 'playwright-core';
-import { colors } from 'playwright-core/lib/utilsBundle';
+import type { ExpectMatcherState } from '../../types/test';
+import type { Page, Locator } from 'playwright-core';
 
 export async function toMatchText(
   this: ExpectMatcherState,
   matcherName: string,
-  receiver: Locator,
-  receiverType: string,
+  receiver: Locator | Page,
+  receiverType: 'Locator' | 'Page',
   query: (isNot: boolean, timeout: number) => Promise<{ matches: boolean, received?: string, log?: string[], timedOut?: boolean }>,
   expected: string | RegExp,
-  options: { timeout?: number, matchSubstring?: boolean } = {},
+  options: { timeout?: number, matchSubstring?: boolean, receiverLabel?: string } = {},
 ): Promise<MatcherResult<string | RegExp, string>> {
   expectTypes(receiver, [receiverType], matcherName);
 
@@ -49,7 +51,7 @@ export async function toMatchText(
   ) {
     // Same format as jest's matcherErrorMessage
     throw new Error([
-      matcherHint(this, receiver, matcherName, receiver, expected, matcherOptions),
+      matcherHint(this, receiverType === 'Locator' ? receiver as Locator : undefined, matcherName, options.receiverLabel ?? receiver, expected, matcherOptions),
       `${colors.bold('Matcher error')}: ${EXPECTED_COLOR('expected',)} value must be a string or regular expression`,
       this.utils.printWithType('Expected', expected, this.utils.printExpected)
     ].join('\n\n'));
@@ -58,29 +60,56 @@ export async function toMatchText(
   const timeout = options.timeout ?? this.timeout;
 
   const { matches: pass, received, log, timedOut } = await query(!!this.isNot, timeout);
+  if (pass === !this.isNot) {
+    return {
+      name: matcherName,
+      message: () => '',
+      pass,
+      expected
+    };
+  }
+
   const stringSubstring = options.matchSubstring ? 'substring' : 'string';
   const receivedString = received || '';
-  const messagePrefix = matcherHint(this, receiver, matcherName, 'locator', undefined, matcherOptions, timedOut ? timeout : undefined);
+  const messagePrefix = matcherHint(this, receiverType === 'Locator' ? receiver as Locator : undefined, matcherName, options.receiverLabel ?? 'locator', undefined, matcherOptions, timedOut ? timeout : undefined);
   const notFound = received === kNoElementsFoundError;
-  const message = () => {
-    if (pass) {
-      if (typeof expected === 'string') {
-        if (notFound)
-          return messagePrefix + `Expected ${stringSubstring}: not ${this.utils.printExpected(expected)}\nReceived: ${received}` + callLogText(log);
-        const printedReceived = printReceivedStringContainExpectedSubstring(receivedString, receivedString.indexOf(expected), expected.length);
-        return messagePrefix + `Expected ${stringSubstring}: not ${this.utils.printExpected(expected)}\nReceived string: ${printedReceived}` + callLogText(log);
+
+  let printedReceived: string | undefined;
+  let printedExpected: string | undefined;
+  let printedDiff: string | undefined;
+  if (pass) {
+    if (typeof expected === 'string') {
+      if (notFound) {
+        printedExpected = `Expected ${stringSubstring}: not ${this.utils.printExpected(expected)}`;
+        printedReceived = `Received: ${received}`;
       } else {
-        if (notFound)
-          return messagePrefix + `Expected pattern: not ${this.utils.printExpected(expected)}\nReceived: ${received}` + callLogText(log);
-        const printedReceived = printReceivedStringContainExpectedResult(receivedString, typeof expected.exec === 'function' ? expected.exec(receivedString) : null);
-        return messagePrefix + `Expected pattern: not ${this.utils.printExpected(expected)}\nReceived string: ${printedReceived}` + callLogText(log);
+        printedExpected = `Expected ${stringSubstring}: not ${this.utils.printExpected(expected)}`;
+        const formattedReceived = printReceivedStringContainExpectedSubstring(receivedString, receivedString.indexOf(expected), expected.length);
+        printedReceived = `Received string: ${formattedReceived}`;
       }
     } else {
-      const labelExpected = `Expected ${typeof expected === 'string' ? stringSubstring : 'pattern'}`;
-      if (notFound)
-        return messagePrefix + `${labelExpected}: ${this.utils.printExpected(expected)}\nReceived: ${received}` + callLogText(log);
-      return messagePrefix + this.utils.printDiffOrStringify(expected, receivedString, labelExpected, 'Received string', false) + callLogText(log);
+      if (notFound) {
+        printedExpected = `Expected pattern: not ${this.utils.printExpected(expected)}`;
+        printedReceived = `Received: ${received}`;
+      } else {
+        printedExpected = `Expected pattern: not ${this.utils.printExpected(expected)}`;
+        const formattedReceived = printReceivedStringContainExpectedResult(receivedString, typeof expected.exec === 'function' ? expected.exec(receivedString) : null);
+        printedReceived = `Received string: ${formattedReceived}`;
+      }
     }
+  } else {
+    const labelExpected = `Expected ${typeof expected === 'string' ? stringSubstring : 'pattern'}`;
+    if (notFound) {
+      printedExpected = `${labelExpected}: ${this.utils.printExpected(expected)}`;
+      printedReceived = `Received: ${received}`;
+    } else {
+      printedDiff = this.utils.printDiffOrStringify(expected, receivedString, labelExpected, 'Received string', false);
+    }
+  }
+
+  const message = () => {
+    const resultDetails = printedDiff ? printedDiff : printedExpected + '\n' + printedReceived;
+    return messagePrefix + resultDetails + callLogText(log);
   };
 
   return {

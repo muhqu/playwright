@@ -14,18 +14,20 @@
  * limitations under the License.
  */
 
+import { frameSnapshotStreamer } from './snapshotterInjected';
+import { monotonicTime } from '../../../utils/isomorphic/time';
+import { calculateSha1, createGuid } from '../../utils/crypto';
+import { debugLogger } from '../../utils/debugLogger';
+import { eventsHelper } from '../../utils/eventsHelper';
+import { mime } from '../../../utilsBundle';
 import { BrowserContext } from '../../browserContext';
 import { Page } from '../../page';
-import type { RegisteredListener } from '../../../utils/eventsHelper';
-import { eventsHelper } from '../../../utils/eventsHelper';
-import { debugLogger } from '../../../utils/debugLogger';
-import type { Frame } from '../../frames';
+
 import type { SnapshotData } from './snapshotterInjected';
-import { frameSnapshotStreamer } from './snapshotterInjected';
-import { calculateSha1, createGuid, monotonicTime } from '../../../utils';
+import type { RegisteredListener } from '../../utils/eventsHelper';
+import type { Frame } from '../../frames';
+import type { InitScript } from '../../page';
 import type { FrameSnapshot } from '@trace/snapshot';
-import type { ElementHandle } from '../../dom';
-import { mime } from '../../../utilsBundle';
 
 export type SnapshotterBlob = {
   buffer: Buffer,
@@ -42,7 +44,7 @@ export class Snapshotter {
   private _delegate: SnapshotterDelegate;
   private _eventListeners: RegisteredListener[] = [];
   private _snapshotStreamer: string;
-  private _initialized = false;
+  private _initScript: InitScript | undefined;
   private _started = false;
 
   constructor(context: BrowserContext, delegate: SnapshotterDelegate) {
@@ -58,25 +60,27 @@ export class Snapshotter {
 
   async start() {
     this._started = true;
-    if (!this._initialized) {
-      this._initialized = true;
+    if (!this._initScript)
       await this._initialize();
-    }
     await this.reset();
   }
 
   async reset() {
     if (this._started)
-      await this._runInAllFrames(`window["${this._snapshotStreamer}"].reset()`);
+      await this._context.safeNonStallingEvaluateInAllFrames(`window["${this._snapshotStreamer}"].reset()`, 'main');
   }
 
-  async stop() {
+  stop() {
     this._started = false;
   }
 
-  resetForReuse() {
+  async resetForReuse() {
     // Next time we start recording, we will call addInitScript again.
-    this._initialized = false;
+    if (this._initScript) {
+      eventsHelper.removeEventListeners(this._eventListeners);
+      await this._context.removeInitScripts([this._initScript]);
+      this._initScript = undefined;
+    }
   }
 
   async _initialize() {
@@ -87,38 +91,18 @@ export class Snapshotter {
     ];
 
     const { javaScriptEnabled } = this._context._options;
-    const initScript = `(${frameSnapshotStreamer})("${this._snapshotStreamer}", ${javaScriptEnabled || javaScriptEnabled === undefined})`;
-    await this._context.addInitScript(initScript);
-    await this._runInAllFrames(initScript);
-  }
-
-  private async _runInAllFrames(expression: string) {
-    const frames = [];
-    for (const page of this._context.pages())
-      frames.push(...page.frames());
-    await Promise.all(frames.map(frame => {
-      return frame.nonStallingRawEvaluateInExistingMainContext(expression).catch(e => debugLogger.log('error', e));
-    }));
+    const initScriptSource = `(${frameSnapshotStreamer})("${this._snapshotStreamer}", ${javaScriptEnabled || javaScriptEnabled === undefined})`;
+    this._initScript = await this._context.addInitScript(undefined, initScriptSource);
+    await this._context.safeNonStallingEvaluateInAllFrames(initScriptSource, 'main');
   }
 
   dispose() {
     eventsHelper.removeEventListeners(this._eventListeners);
   }
 
-  async captureSnapshot(page: Page, callId: string, snapshotName: string, element?: ElementHandle): Promise<void> {
+  async captureSnapshot(page: Page, callId: string, snapshotName: string): Promise<void> {
     // Prepare expression synchronously.
     const expression = `window["${this._snapshotStreamer}"].captureSnapshot(${JSON.stringify(snapshotName)})`;
-
-    // In a best-effort manner, without waiting for it, mark target element.
-    element?.callFunctionNoReply((element: Element, callId: string) => {
-      const customEvent = new CustomEvent('__playwright_target__', {
-        bubbles: true,
-        cancelable: true,
-        detail: callId,
-        composed: true,
-      });
-      element.dispatchEvent(customEvent);
-    }, callId);
 
     // In each frame, in a non-stalling manner, capture the snapshots.
     const snapshots = page.frames().map(async frame => {

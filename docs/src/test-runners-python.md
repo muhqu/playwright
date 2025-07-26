@@ -99,7 +99,7 @@ See [Running Tests](./running-tests.md) for general information on `pytest` opti
 
 ## Examples
 
-### Configure Mypy typings for auto-completion
+### Configure typings for auto-completion
 
 ```py title="test_my_application.py"
 from playwright.sync_api import Page
@@ -109,15 +109,22 @@ def test_visit_admin_dashboard(page: Page):
     # ...
 ```
 
-### Configure slow mo
+If you're using VSCode with Pylance, these types can be inferred by enabling the `python.testing.pytestEnabled` setting so you don't need the type annotation.
 
-Run tests with slow mo with the `--slowmo` argument.
+### Using multiple contexts
 
-```bash
-pytest --slowmo 100
+In order to simulate multiple users, you can create multiple [`BrowserContext`](./browser-contexts) instances.
+
+```py title="test_my_application.py"
+from playwright.sync_api import Page, BrowserContext
+from pytest_playwright.pytest_playwright import CreateContextCallback
+
+def test_foo(page: Page, new_context: CreateContextCallback) -> None:
+    page.goto("https://example.com")
+    context = new_context()
+    page2 = context.new_page()
+    # page and page2 are in different contexts
 ```
-
-Slows down Playwright operations by 100 milliseconds.
 
 ### Skip test by browser
 
@@ -196,7 +203,7 @@ def browser_context_args(browser_context_args):
     }
 ```
 
-### Device emulation
+### Device emulation / BrowserContext option overrides
 
 ```py title="conftest.py"
 import pytest
@@ -252,3 +259,20 @@ def test_bing_is_working(page):
 ## Deploy to CI
 
 See the [guides for CI providers](./ci.md) to deploy your tests to CI/CD.
+
+## Async Fixtures
+
+To use async fixtures, install [`pytest-playwright-asyncio`](https://pypi.org/project/pytest-playwright-asyncio/).
+
+Ensure you are using `pytest-asyncio>=0.26.0` and set [`asyncio_default_test_loop_scope = session`](https://pytest-asyncio.readthedocs.io/en/v0.26.0/how-to-guides/change_default_test_loop.html) in your configuration (`pytest.ini/pyproject.toml/setup.cfg`).
+
+
+```python
+import pytest
+from playwright.async_api import Page
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_foo(page: Page):
+    await page.goto("https://github.com")
+    # ...
+```

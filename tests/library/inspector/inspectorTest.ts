@@ -15,13 +15,14 @@
  */
 
 import { contextTest } from '../../config/browserTest';
-import type { Page } from 'playwright-core';
+import type { Locator, Page } from 'playwright-core';
 import { step } from '../../config/baseTest';
 import * as path from 'path';
 import type { Source } from '../../../packages/recorder/src/recorderTypes';
 import type { CommonFixtures, TestChildProcess } from '../../config/commonFixtures';
 import { stripAnsi } from '../../config/utils';
 import { expect } from '@playwright/test';
+import { nodePlatform } from '../../../packages/playwright-core/lib/server/utils/nodePlatform';
 export { expect } from '@playwright/test';
 
 type CLITestArgs = {
@@ -46,7 +47,7 @@ const codegenLang2Id: Map<string, string> = new Map([
 ]);
 const codegenLangId2lang = new Map([...codegenLang2Id.entries()].map(([lang, langId]) => [langId, lang]));
 
-const playwrightToAutomateInspector = require('../../../packages/playwright-core/lib/inProcessFactory').createInProcessPlaywright();
+const playwrightToAutomateInspector = require('../../../packages/playwright-core/lib/inProcessFactory').createInProcessPlaywright(nodePlatform);
 
 export const test = contextTest.extend<CLITestArgs>({
   recorderPageGetter: async ({ context, toImpl, mode }, run, testInfo) => {
@@ -67,7 +68,8 @@ export const test = contextTest.extend<CLITestArgs>({
     });
   },
 
-  runCLI: async ({ childProcess, browserName, channel, headless, mode, launchOptions, codegenMode }, run, testInfo) => {
+  runCLI: async ({ childProcess, browserName, channel, headless, mode, launchOptions }, run, testInfo) => {
+    testInfo.slow();
     testInfo.skip(mode.startsWith('service'));
 
     await run((cliArgs, { autoExitWhen } = {}) => {
@@ -78,17 +80,15 @@ export const test = contextTest.extend<CLITestArgs>({
         args: cliArgs,
         executablePath: launchOptions.executablePath,
         autoExitWhen,
-        codegenMode
       });
     });
   },
 
-  openRecorder: async ({ context, recorderPageGetter, codegenMode }, run) => {
-    await run(async (options?: { testIdAttributeName?: string }) => {
+  openRecorder: async ({ context, recorderPageGetter }, use) => {
+    await use(async options => {
       await (context as any)._enableRecorder({
         language: 'javascript',
         mode: 'recording',
-        codegenMode,
         ...options
       });
       const page = await context.newPage();
@@ -97,7 +97,7 @@ export const test = contextTest.extend<CLITestArgs>({
   },
 });
 
-class Recorder {
+export class Recorder {
   page: Page;
   _highlightCallback: Function;
   _highlightInstalled: boolean;
@@ -141,34 +141,54 @@ class Recorder {
   }
 
   async waitForOutput(file: string, text: string): Promise<Map<string, Source>> {
-    if (!codegenLang2Id.has(file))
-      throw new Error(`Unknown language: ${file}`);
-    await expect.poll(() => this.recorderPage.evaluate(languageId => {
-      const sources = ((window as any).playwrightSourcesEchoForTest || []) as Source[];
-      return sources.find(s => s.id === languageId)?.text || '';
-    }, codegenLang2Id.get(file)), { timeout: 0 }).toContain(text);
-    const sources: Source[] = await this.recorderPage.evaluate(() => (window as any).playwrightSourcesEchoForTest || []);
-    for (const source of sources) {
-      if (!codegenLangId2lang.has(source.id))
-        throw new Error(`Unknown language: ${source.id}`);
-      this._sources.set(codegenLangId2lang.get(source.id), source);
-    }
-    return this._sources;
+    return await test.step('waitForOutput', async () => {
+      if (!codegenLang2Id.has(file))
+        throw new Error(`Unknown language: ${file}`);
+      await expect.poll(() => this.recorderPage.evaluate(languageId => {
+        const sources = ((window as any).playwrightSourcesEchoForTest || []) as Source[];
+        return sources.find(s => s.id === languageId)?.text || '';
+      }, codegenLang2Id.get(file)), { timeout: 0 }).toContain(text);
+      const sources: Source[] = await this.recorderPage.evaluate(() => (window as any).playwrightSourcesEchoForTest || []);
+      for (const source of sources) {
+        if (!codegenLangId2lang.has(source.id))
+          throw new Error(`Unknown language: ${source.id}`);
+        this._sources.set(codegenLangId2lang.get(source.id), source);
+      }
+      return this._sources;
+    }, { box: true });
   }
 
   sources(): Map<string, Source> {
     return this._sources;
   }
 
+  async text(file: string): Promise<string> {
+    const sources: Source[] = await this.recorderPage.evaluate(() => (window as any).playwrightSourcesEchoForTest || []);
+    for (const source of sources) {
+      if (codegenLangId2lang.get(source.id) === file)
+        return source.text;
+    }
+    return '';
+  }
+
   async waitForHighlight(action: () => Promise<void>): Promise<string> {
+    return await test.step('waitForHighlight', async () => {
+      await this.page.$$eval('x-pw-highlight', els => els.forEach(e => e.remove()));
+      await this.page.$$eval('x-pw-tooltip', els => els.forEach(e => e.remove()));
+      await action();
+      await this.page.locator('x-pw-highlight').waitFor();
+      await this.page.locator('x-pw-tooltip').waitFor();
+      await expect(this.page.locator('x-pw-tooltip')).not.toHaveText('');
+      await expect(this.page.locator('x-pw-tooltip')).not.toHaveText(`locator('body')`);
+      return this.page.locator('x-pw-tooltip').textContent();
+    }, { box: true });
+  }
+
+  async waitForHighlightNoTooltip(action: () => Promise<void>): Promise<string> {
     await this.page.$$eval('x-pw-highlight', els => els.forEach(e => e.remove()));
-    await this.page.$$eval('x-pw-tooltip', els => els.forEach(e => e.remove()));
     await action();
     await this.page.locator('x-pw-highlight').waitFor();
-    await this.page.locator('x-pw-tooltip').waitFor();
-    await expect(this.page.locator('x-pw-tooltip')).not.toHaveText('');
-    await expect(this.page.locator('x-pw-tooltip')).not.toHaveText(`locator('body')`);
-    return this.page.locator('x-pw-tooltip').textContent();
+    return '';
   }
 
   async waitForActionPerformed(): Promise<{ hovered: string | null, active: string | null }> {
@@ -185,22 +205,27 @@ class Recorder {
     return new Promise(f => callback = f);
   }
 
-  async hoverOverElement(selector: string, options?: { position?: { x: number, y: number }}): Promise<string> {
-    return this.waitForHighlight(async () => {
+  async hoverOverElement(selector: string, options?: { position?: { x: number, y: number }, omitTooltip?: boolean }): Promise<string> {
+    return (options?.omitTooltip ? this.waitForHighlightNoTooltip : this.waitForHighlight).call(this, async () => {
       const box = await this.page.locator(selector).first().boundingBox();
       const offset = options?.position || { x: box.width / 2, y: box.height / 2 };
       await this.page.mouse.move(box.x + offset.x, box.y + offset.y);
     });
   }
 
-  async trustedMove(selector: string) {
-    const box = await this.page.locator(selector).first().boundingBox();
+  async trustedMove(selector: string | Locator) {
+    const locator = typeof selector === 'string' ? this.page.locator(selector).first() : selector;
+    const box = await locator.boundingBox();
     await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   }
 
   async trustedClick(options?: { button?: 'left' | 'right' | 'middle' }) {
     await this.page.mouse.down(options);
     await this.page.mouse.up(options);
+  }
+
+  async trustedPress(text: string) {
+    await this.page.keyboard.press(text);
   }
 
   async trustedDblclick() {
@@ -218,7 +243,7 @@ class Recorder {
 class CLIMock {
   process: TestChildProcess;
 
-  constructor(childProcess: CommonFixtures['childProcess'], options: { browserName: string, channel: string | undefined, headless: boolean | undefined, args: string[], executablePath: string | undefined, autoExitWhen: string | undefined, codegenMode?: 'trace-events' | 'actions'}) {
+  constructor(childProcess: CommonFixtures['childProcess'], options: { browserName: string, channel: string | undefined, headless: boolean | undefined, args: string[], executablePath: string | undefined, autoExitWhen: string | undefined}) {
     const nodeArgs = [
       'node',
       path.join(__dirname, '..', '..', '..', 'packages', 'playwright-core', 'cli.js'),
@@ -231,7 +256,6 @@ class CLIMock {
     this.process = childProcess({
       command: nodeArgs,
       env: {
-        PW_RECORDER_IS_TRACE_VIEWER: options.codegenMode === 'trace-events' ? '1' : undefined,
         PWTEST_CLI_AUTO_EXIT_WHEN: options.autoExitWhen,
         PWTEST_CLI_IS_UNDER_TEST: '1',
         PWTEST_CLI_HEADLESS: options.headless ? '1' : undefined,

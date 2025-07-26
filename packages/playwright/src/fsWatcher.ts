@@ -15,6 +15,7 @@
  */
 
 import { chokidar } from './utilsBundle';
+
 import type { FSWatcher } from 'chokidar';
 
 export type FSEvent = { event: 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir', file: string };
@@ -32,7 +33,7 @@ export class Watcher {
   }
 
   async update(watchedPaths: string[], ignoredFolders: string[], reportPending: boolean) {
-    if (JSON.stringify([this._watchedPaths, this._ignoredFolders]) === JSON.stringify(watchedPaths, ignoredFolders))
+    if (JSON.stringify([this._watchedPaths, this._ignoredFolders]) === JSON.stringify([watchedPaths, ignoredFolders]))
       return;
 
     if (reportPending)

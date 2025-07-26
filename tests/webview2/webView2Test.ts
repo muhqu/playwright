@@ -32,6 +32,7 @@ export const webView2Test = baseTest.extend<TraceViewerFixtures>(traceViewerFixt
   isElectron: [false, { scope: 'worker' }],
   electronMajorVersion: [0, { scope: 'worker' }],
   isWebView2: [true, { scope: 'worker' }],
+  isHeadlessShell: [false, { scope: 'worker' }],
 
   browser: [async ({ playwright }, use, testInfo) => {
     const cdpPort = 10000 + testInfo.workerIndex;
@@ -40,7 +41,7 @@ export const webView2Test = baseTest.extend<TraceViewerFixtures>(traceViewerFixt
       shell: true,
       env: {
         ...process.env,
-        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${cdpPort} ${chromiumSwitches.join(' ')}`,
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${cdpPort} ${chromiumSwitches().join(' ')}`,
         WEBVIEW2_USER_DATA_FOLDER: path.join(fs.realpathSync.native(os.tmpdir()), `playwright-webview2-tests/user-data-dir-${testInfo.workerIndex}`),
       }
     });

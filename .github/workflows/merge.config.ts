@@ -1,4 +1,4 @@
 export default {
   testDir: '../../tests',
-  reporter: [['markdown'], ['html']]
+  reporter: [[require.resolve('../../tests/config/ghaMarkdownReporter')], ['html']]
 };

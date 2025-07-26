@@ -27,6 +27,13 @@ export function escapeWithQuotes(text: string, char: string = '\'') {
   throw new Error('Invalid escape char');
 }
 
+export function escapeTemplateString(text: string): string {
+  return text
+      .replace(/\\/g, '\\\\')
+      .replace(/`/g, '\\`')
+      .replace(/\$\{/g, '\\${');
+}
+
 export function isString(obj: any): obj is string {
   return typeof obj === 'string' || obj instanceof String;
 }
@@ -40,31 +47,8 @@ export function toSnakeCase(name: string): string {
   return name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/([A-Z])([A-Z][a-z])/g, '$1_$2').toLowerCase();
 }
 
-export function cssEscape(s: string): string {
-  let result = '';
-  for (let i = 0; i < s.length; i++)
-    result += cssEscapeOne(s, i);
-  return result;
-}
-
 export function quoteCSSAttributeValue(text: string): string {
-  return `"${cssEscape(text).replace(/\\ /g, ' ')}"`;
-}
-
-function cssEscapeOne(s: string, i: number): string {
-  // https://drafts.csswg.org/cssom/#serialize-an-identifier
-  const c = s.charCodeAt(i);
-  if (c === 0x0000)
-    return '\uFFFD';
-  if ((c >= 0x0001 && c <= 0x001f) ||
-      (c >= 0x0030 && c <= 0x0039 && (i === 0 || (i === 1 && s.charCodeAt(0) === 0x002d))))
-    return '\\' + c.toString(16) + ' ';
-  if (i === 0 && c === 0x002d && s.length === 1)
-    return '\\' + s.charAt(i);
-  if (c >= 0x0080 || c === 0x002d || c === 0x005f || (c >= 0x0030 && c <= 0x0039) ||
-      (c >= 0x0041 && c <= 0x005a) || (c >= 0x0061 && c <= 0x007a))
-    return s.charAt(i);
-  return '\\' + s.charAt(i);
+  return `"${text.replace(/["\\]/g, char => '\\' + char)}"`;
 }
 
 let normalizedWhitespaceCache: Map<string, string> | undefined;
@@ -76,7 +60,7 @@ export function cacheNormalizedWhitespaces() {
 export function normalizeWhiteSpace(text: string): string {
   let result = normalizedWhitespaceCache?.get(text);
   if (result === undefined) {
-    result = text.replace(/\u200b/g, '').trim().replace(/\s+/g, ' ');
+    result = text.replace(/[\u200b\u00ad]/g, '').trim().replace(/\s+/g, ' ');
     normalizedWhitespaceCache?.set(text, result);
   }
   return result;
@@ -139,4 +123,33 @@ export function escapeHTMLAttribute(s: string): string {
 }
 export function escapeHTML(s: string): string {
   return s.replace(/[&<]/ug, char => (escaped as any)[char]);
+}
+
+export function longestCommonSubstring(s1: string, s2: string): string {
+  const n = s1.length;
+  const m = s2.length;
+  let maxLen = 0;
+  let endingIndex = 0;
+
+  // Initialize a 2D array with zeros
+  const dp = Array(n + 1)
+      .fill(null)
+      .map(() => Array(m + 1).fill(0));
+
+  // Build the dp table
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      if (s1[i - 1] === s2[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+
+        if (dp[i][j] > maxLen) {
+          maxLen = dp[i][j];
+          endingIndex = i;
+        }
+      }
+    }
+  }
+
+  // Extract the longest common substring
+  return s1.slice(endingIndex - maxLen, endingIndex);
 }

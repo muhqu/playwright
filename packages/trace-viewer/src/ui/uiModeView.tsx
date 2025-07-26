@@ -28,7 +28,6 @@ import { ToolbarButton } from '@web/components/toolbarButton';
 import { Toolbar } from '@web/components/toolbar';
 import type { XtermDataSource } from '@web/components/xtermWrapper';
 import { XtermWrapper } from '@web/components/xtermWrapper';
-import { useDarkModeSetting } from '@web/theme';
 import { clsx, settings, useSetting } from '@web/uiUtils';
 import { statusEx, TestTree } from '@testIsomorphic/testTree';
 import type { TreeItem  } from '@testIsomorphic/testTree';
@@ -37,6 +36,7 @@ import { FiltersView } from './uiModeFiltersView';
 import { TestListView } from './uiModeTestListView';
 import { TraceView } from './uiModeTraceView';
 import { SettingsView } from './settingsView';
+import { DefaultSettingsView } from './defaultSettingsView';
 
 let xtermSize = { cols: 80, rows: 24 };
 const xtermDataSource: XtermDataSource = {
@@ -47,18 +47,16 @@ const xtermDataSource: XtermDataSource = {
 };
 
 const searchParams = new URLSearchParams(window.location.search);
-const guid = searchParams.get('ws');
-const wsURL = new URL(`../${guid}`, window.location.toString());
-wsURL.protocol = (window.location.protocol === 'https:' ? 'wss:' : 'ws:');
+const testServerBaseUrl = new URL(searchParams.get('server') ?? '../', window.location.href);
+const wsURL = new URL(searchParams.get('ws')!, testServerBaseUrl);
+wsURL.protocol = (wsURL.protocol === 'https:' ? 'wss:' : 'ws:');
 const queryParams = {
   args: searchParams.getAll('arg'),
   grep: searchParams.get('grep') || undefined,
   grepInvert: searchParams.get('grepInvert') || undefined,
   projects: searchParams.getAll('project'),
   workers: searchParams.get('workers') || undefined,
-  timeout: searchParams.has('timeout') ? +searchParams.get('timeout')! : undefined,
   headed: searchParams.has('headed'),
-  outputDir: searchParams.get('outputDir') || undefined,
   updateSnapshots: (searchParams.get('updateSnapshots') as 'all' | 'none' | 'missing' | undefined) || undefined,
   reporters: searchParams.has('reporter') ? searchParams.getAll('reporter') : undefined,
   pathSeparator: searchParams.get('pathSeparator') || '/',
@@ -92,6 +90,7 @@ export const UIModeView: React.FC<{}> = ({
   const commandQueue = React.useRef(Promise.resolve());
   const runTestBacklog = React.useRef<Set<string>>(new Set());
   const [collapseAllCount, setCollapseAllCount] = React.useState(0);
+  const [expandAllCount, setExpandAllCount] = React.useState(0);
   const [isDisconnected, setIsDisconnected] = React.useState(false);
   const [hasBrowsers, setHasBrowsers] = React.useState(true);
   const [testServerConnection, setTestServerConnection] = React.useState<TestServerConnection>();
@@ -102,17 +101,17 @@ export const UIModeView: React.FC<{}> = ({
   const onRevealSource = React.useCallback(() => setRevealSource(true), [setRevealSource]);
 
   const showTestingOptions = false;
-  const [singleWorker, setSingleWorker] = React.useState(queryParams.workers === '1');
-  const [showBrowser, setShowBrowser] = React.useState(queryParams.headed);
-  const [updateSnapshots, setUpdateSnapshots] = React.useState(queryParams.updateSnapshots === 'all');
-  const [darkMode, setDarkMode] = useDarkModeSetting();
-  const [showScreenshot, setShowScreenshot] = useSetting('screenshot-instead-of-snapshot', false);
-
+  const [singleWorker, setSingleWorker] = React.useState(false);
+  const [showBrowser, setShowBrowser] = React.useState(false);
+  const [updateSnapshots, setUpdateSnapshots] = React.useState(false);
 
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const reloadTests = React.useCallback(() => {
-    setTestServerConnection(new TestServerConnection(new WebSocketTestServerTransport(wsURL)));
+    setTestServerConnection(prevConnection => {
+      prevConnection?.close();
+      return new TestServerConnection(new WebSocketTestServerTransport(wsURL));
+    });
   }, []);
 
   // Load tests on startup.
@@ -187,14 +186,12 @@ export const UIModeView: React.FC<{}> = ({
           interceptStdio: true,
           watchTestDirs: true
         });
-        const { status, report } = await testServerConnection.runGlobalSetup({
-          outputDir: queryParams.outputDir,
-        });
+        const { status, report } = await testServerConnection.runGlobalSetup({});
         teleSuiteUpdater.processGlobalReport(report);
         if (status !== 'passed')
           return;
 
-        const result = await testServerConnection.listTests({ projects: queryParams.projects, locations: queryParams.args, grep: queryParams.grep, grepInvert: queryParams.grepInvert, outputDir: queryParams.outputDir });
+        const result = await testServerConnection.listTests({ projects: queryParams.projects, locations: queryParams.args, grep: queryParams.grep, grepInvert: queryParams.grepInvert });
         teleSuiteUpdater.processListReport(result.report);
 
         testServerConnection.onReport(params => {
@@ -229,7 +226,7 @@ export const UIModeView: React.FC<{}> = ({
         newFilter.set(projectSuite.title, !!selectedProjects?.includes(projectSuite.title));
     }
     if (!selectedProjects && newFilter.size && ![...newFilter.values()].includes(true))
-      newFilter.set(newFilter.entries().next().value[0], true);
+      newFilter.set(newFilter.entries().next().value![0], true);
     if (projectFilters.size !== newFilter.size || [...projectFilters].some(([k, v]) => newFilter.get(k) !== v))
       setProjectFilters(newFilter);
   }, [projectFilters, testModel]);
@@ -291,13 +288,9 @@ export const UIModeView: React.FC<{}> = ({
         grepInvert: queryParams.grepInvert,
         testIds: [...testIds],
         projects: [...projectFilters].filter(([_, v]) => v).map(([p]) => p),
-        // When started with `--workers=1`, the setting allows to undo that.
-        // Otherwise, fallback to the cli `--workers=X` argument.
-        workers: singleWorker ? '1' : (queryParams.workers === '1' ? undefined : queryParams.workers),
-        timeout: queryParams.timeout,
-        headed: showBrowser,
-        outputDir: queryParams.outputDir,
-        updateSnapshots: updateSnapshots ? 'all' : queryParams.updateSnapshots,
+        ...(singleWorker ? { workers: '1' } : {}),
+        ...(showBrowser ? { headed: true } : {}),
+        ...(updateSnapshots ? { updateSnapshots: 'all' } : {}),
         reporters: queryParams.reporters,
         trace: 'on',
       });
@@ -319,7 +312,7 @@ export const UIModeView: React.FC<{}> = ({
       commandQueue.current = commandQueue.current.then(async () => {
         setIsLoading(true);
         try {
-          const result = await testServerConnection.listTests({ projects: queryParams.projects, locations: queryParams.args, grep: queryParams.grep, grepInvert: queryParams.grepInvert, outputDir: queryParams.outputDir });
+          const result = await testServerConnection.listTests({ projects: queryParams.projects, locations: queryParams.args, grep: queryParams.grep, grepInvert: queryParams.grepInvert });
           teleSuiteUpdater.processListReport(result.report);
         } catch (e) {
           // eslint-disable-next-line no-console
@@ -483,6 +476,9 @@ export const UIModeView: React.FC<{}> = ({
           <ToolbarButton icon='collapse-all' title='Collapse all' onClick={() => {
             setCollapseAllCount(collapseAllCount + 1);
           }} />
+          <ToolbarButton icon='expand-all' title='Expand all' onClick={() => {
+            setExpandAllCount(expandAllCount + 1);
+          }} />
         </Toolbar>
         <TestListView
           filterText={filterText}
@@ -497,6 +493,7 @@ export const UIModeView: React.FC<{}> = ({
           setWatchedTreeIds={setWatchedTreeIds}
           isLoading={isLoading}
           requestedCollapseAllCount={collapseAllCount}
+          requestedExpandAllCount={expandAllCount}
           setFilterText={setFilterText}
           onRevealSource={onRevealSource}
         />
@@ -510,9 +507,9 @@ export const UIModeView: React.FC<{}> = ({
             <div className='section-title'>Testing Options</div>
           </Toolbar>
           {testingOptionsVisible && <SettingsView settings={[
-            { value: singleWorker, set: setSingleWorker, title: 'Single worker' },
-            { value: showBrowser, set: setShowBrowser, title: 'Show browser' },
-            { value: updateSnapshots, set: setUpdateSnapshots, title: 'Update snapshots' },
+            { value: singleWorker, set: setSingleWorker, name: 'Single worker' },
+            { value: showBrowser, set: setShowBrowser, name: 'Show browser' },
+            { value: updateSnapshots, set: setUpdateSnapshots, name: 'Update snapshots' },
           ]} />}
         </>}
         <Toolbar noShadow={true} noMinHeight={true} className='settings-toolbar' onClick={() => setSettingsVisible(!settingsVisible)}>
@@ -523,10 +520,7 @@ export const UIModeView: React.FC<{}> = ({
           />
           <div className='section-title'>Settings</div>
         </Toolbar>
-        {settingsVisible && <SettingsView settings={[
-          { value: darkMode, set: setDarkMode, title: 'Dark mode' },
-          { value: showScreenshot, set: setShowScreenshot, title: 'Show screenshot instead of snapshot' },
-        ]} />}
+        {settingsVisible && <DefaultSettingsView />}
       </div>
       }
     />

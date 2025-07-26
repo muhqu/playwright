@@ -15,26 +15,42 @@
  */
 
 import { Browser } from '../browser';
-import type * as channels from '@protocol/channels';
 import { BrowserContextDispatcher } from './browserContextDispatcher';
 import { CDPSessionDispatcher } from './cdpSessionDispatcher';
-import { existingDispatcher } from './dispatcher';
-import type { RootDispatcher } from './dispatcher';
 import { Dispatcher } from './dispatcher';
-import type { CRBrowser } from '../chromium/crBrowser';
-import type { PageDispatcher } from './pageDispatcher';
-import type { CallMetadata } from '../instrumentation';
 import { BrowserContext } from '../browserContext';
-import { Selectors } from '../selectors';
-import type { BrowserTypeDispatcher } from './browserTypeDispatcher';
 import { ArtifactDispatcher } from './artifactDispatcher';
+
+import type { BrowserTypeDispatcher } from './browserTypeDispatcher';
+import type { PageDispatcher } from './pageDispatcher';
+import type { CRBrowser } from '../chromium/crBrowser';
+import type * as channels from '@protocol/channels';
+import type { Progress } from '@protocol/progress';
+
+type BrowserDispatcherOptions = {
+  // Do not allow to close this browser.
+  ignoreStopAndKill?: boolean,
+  // Only expose browser contexts created by this dispatcher. By default, all contexts are exposed.
+  isolateContexts?: boolean,
+};
 
 export class BrowserDispatcher extends Dispatcher<Browser, channels.BrowserChannel, BrowserTypeDispatcher> implements channels.BrowserChannel {
   _type_Browser = true;
+  private _options: BrowserDispatcherOptions;
+  private _isolatedContexts = new Set<BrowserContext>();
 
-  constructor(scope: BrowserTypeDispatcher, browser: Browser) {
+  constructor(scope: BrowserTypeDispatcher, browser: Browser, options: BrowserDispatcherOptions = {}) {
     super(scope, browser, 'Browser', { version: browser.version(), name: browser.options.name });
-    this.addObjectListener(Browser.Events.Disconnected, () => this._didClose());
+    this._options = options;
+
+    if (!options.isolateContexts) {
+      this.addObjectListener(Browser.Events.Context, (context: BrowserContext) => this._dispatchEvent('context', { context: BrowserContextDispatcher.from(this, context) }));
+      this.addObjectListener(Browser.Events.Disconnected, () => this._didClose());
+      if (browser._defaultContext)
+        this._dispatchEvent('context', { context: BrowserContextDispatcher.from(this, browser._defaultContext) });
+      for (const context of browser.contexts())
+        this._dispatchEvent('context', { context: BrowserContextDispatcher.from(this, context) });
+    }
   }
 
   _didClose() {
@@ -42,26 +58,50 @@ export class BrowserDispatcher extends Dispatcher<Browser, channels.BrowserChann
     this._dispose();
   }
 
-  async newContext(params: channels.BrowserNewContextParams, metadata: CallMetadata): Promise<channels.BrowserNewContextResult> {
-    const context = await this._object.newContext(metadata, params);
-    return { context: new BrowserContextDispatcher(this, context) };
+  async newContext(params: channels.BrowserNewContextParams, progress: Progress): Promise<channels.BrowserNewContextResult> {
+    if (!this._options.isolateContexts) {
+      const context = await this._object.newContext(progress, params);
+      const contextDispatcher = BrowserContextDispatcher.from(this, context);
+      return { context: contextDispatcher };
+    }
+
+    if (params.recordVideo)
+      params.recordVideo.dir = this._object.options.artifactsDir;
+    const context = await this._object.newContext(progress, params);
+    this._isolatedContexts.add(context);
+    context.on(BrowserContext.Events.Close, () => this._isolatedContexts.delete(context));
+    const contextDispatcher = BrowserContextDispatcher.from(this, context);
+    this._dispatchEvent('context', { context: contextDispatcher });
+    return { context: contextDispatcher };
   }
 
-  async newContextForReuse(params: channels.BrowserNewContextForReuseParams, metadata: CallMetadata): Promise<channels.BrowserNewContextForReuseResult> {
-    return await newContextForReuse(this._object, this, params, null, metadata);
+  async newContextForReuse(params: channels.BrowserNewContextForReuseParams, progress: Progress): Promise<channels.BrowserNewContextForReuseResult> {
+    const context = await this._object.newContextForReuse(progress, params);
+    const contextDispatcher = BrowserContextDispatcher.from(this, context);
+    this._dispatchEvent('context', { context: contextDispatcher });
+    return { context: contextDispatcher };
   }
 
-  async stopPendingOperations(params: channels.BrowserStopPendingOperationsParams, metadata: CallMetadata): Promise<channels.BrowserStopPendingOperationsResult> {
-    await this._object.stopPendingOperations(params.reason);
+  async disconnectFromReusedContext(params: channels.BrowserDisconnectFromReusedContextParams, progress: Progress): Promise<void> {
+    const context = this._object.contextForReuse();
+    const contextDispatcher = context ? this.connection.existingDispatcher<BrowserContextDispatcher>(context) : undefined;
+    if (contextDispatcher) {
+      await contextDispatcher.stopPendingOperations(new Error(params.reason));
+      contextDispatcher._dispose();
+    }
   }
 
-  async close(params: channels.BrowserCloseParams, metadata: CallMetadata): Promise<void> {
-    metadata.potentiallyClosesScope = true;
+  async close(params: channels.BrowserCloseParams, progress: Progress): Promise<void> {
+    if (this._options.ignoreStopAndKill)
+      return;
+    progress.metadata.potentiallyClosesScope = true;
     await this._object.close(params);
   }
 
-  async killForTests(_: any, metadata: CallMetadata): Promise<void> {
-    metadata.potentiallyClosesScope = true;
+  async killForTests(params: channels.BrowserKillForTestsParams, progress: Progress): Promise<void> {
+    if (this._options.ignoreStopAndKill)
+      return;
+    progress.metadata.potentiallyClosesScope = true;
     await this._object.killForTests();
   }
 
@@ -69,86 +109,24 @@ export class BrowserDispatcher extends Dispatcher<Browser, channels.BrowserChann
     return { userAgent: this._object.userAgent() };
   }
 
-  async newBrowserCDPSession(): Promise<channels.BrowserNewBrowserCDPSessionResult> {
+  async newBrowserCDPSession(params: channels.BrowserNewBrowserCDPSessionParams, progress: Progress): Promise<channels.BrowserNewBrowserCDPSessionResult> {
+    // Note: progress is ignored because this operation is not cancellable and should not block in the browser anyway.
     if (!this._object.options.isChromium)
       throw new Error(`CDP session is only available in Chromium`);
     const crBrowser = this._object as CRBrowser;
     return { session: new CDPSessionDispatcher(this, await crBrowser.newBrowserCDPSession()) };
   }
 
-  async startTracing(params: channels.BrowserStartTracingParams): Promise<void> {
+  async startTracing(params: channels.BrowserStartTracingParams, progress: Progress): Promise<void> {
+    // Note: progress is ignored because this operation is not cancellable and should not block in the browser anyway.
     if (!this._object.options.isChromium)
       throw new Error(`Tracing is only available in Chromium`);
     const crBrowser = this._object as CRBrowser;
     await crBrowser.startTracing(params.page ? (params.page as PageDispatcher)._object : undefined, params);
   }
 
-  async stopTracing(): Promise<channels.BrowserStopTracingResult> {
-    if (!this._object.options.isChromium)
-      throw new Error(`Tracing is only available in Chromium`);
-    const crBrowser = this._object as CRBrowser;
-    return { artifact: ArtifactDispatcher.from(this, await crBrowser.stopTracing()) };
-  }
-}
-
-// This class implements multiplexing browser dispatchers over a single Browser instance.
-export class ConnectedBrowserDispatcher extends Dispatcher<Browser, channels.BrowserChannel, RootDispatcher> implements channels.BrowserChannel {
-  _type_Browser = true;
-  private _contexts = new Set<BrowserContext>();
-  readonly selectors: Selectors;
-
-  constructor(scope: RootDispatcher, browser: Browser) {
-    super(scope, browser, 'Browser', { version: browser.version(), name: browser.options.name });
-    // When we have a remotely-connected browser, each client gets a fresh Selector instance,
-    // so that two clients do not interfere between each other.
-    this.selectors = new Selectors();
-  }
-
-  async newContext(params: channels.BrowserNewContextParams, metadata: CallMetadata): Promise<channels.BrowserNewContextResult> {
-    if (params.recordVideo)
-      params.recordVideo.dir = this._object.options.artifactsDir;
-    const context = await this._object.newContext(metadata, params);
-    this._contexts.add(context);
-    context.setSelectors(this.selectors);
-    context.on(BrowserContext.Events.Close, () => this._contexts.delete(context));
-    return { context: new BrowserContextDispatcher(this, context) };
-  }
-
-  async newContextForReuse(params: channels.BrowserNewContextForReuseParams, metadata: CallMetadata): Promise<channels.BrowserNewContextForReuseResult> {
-    return await newContextForReuse(this._object, this as any as BrowserDispatcher, params, this.selectors, metadata);
-  }
-
-  async stopPendingOperations(params: channels.BrowserStopPendingOperationsParams, metadata: CallMetadata): Promise<channels.BrowserStopPendingOperationsResult> {
-    await this._object.stopPendingOperations(params.reason);
-  }
-
-  async close(): Promise<void> {
-    // Client should not send us Browser.close.
-  }
-
-  async killForTests(): Promise<void> {
-    // Client should not send us Browser.killForTests.
-  }
-
-  async defaultUserAgentForTest(): Promise<channels.BrowserDefaultUserAgentForTestResult> {
-    throw new Error('Client should not send us Browser.defaultUserAgentForTest');
-  }
-
-  async newBrowserCDPSession(): Promise<channels.BrowserNewBrowserCDPSessionResult> {
-    if (!this._object.options.isChromium)
-      throw new Error(`CDP session is only available in Chromium`);
-    const crBrowser = this._object as CRBrowser;
-    return { session: new CDPSessionDispatcher(this as any as BrowserDispatcher, await crBrowser.newBrowserCDPSession()) };
-  }
-
-  async startTracing(params: channels.BrowserStartTracingParams): Promise<void> {
-    if (!this._object.options.isChromium)
-      throw new Error(`Tracing is only available in Chromium`);
-    const crBrowser = this._object as CRBrowser;
-    await crBrowser.startTracing(params.page ? (params.page as PageDispatcher)._object : undefined, params);
-  }
-
-  async stopTracing(): Promise<channels.BrowserStopTracingResult> {
+  async stopTracing(params: channels.BrowserStopTracingParams, progress: Progress): Promise<channels.BrowserStopTracingResult> {
+    // Note: progress is ignored because this operation is not cancellable and should not block in the browser anyway.
     if (!this._object.options.isChromium)
       throw new Error(`Tracing is only available in Chromium`);
     const crBrowser = this._object as CRBrowser;
@@ -156,20 +134,6 @@ export class ConnectedBrowserDispatcher extends Dispatcher<Browser, channels.Bro
   }
 
   async cleanupContexts() {
-    await Promise.all(Array.from(this._contexts).map(context => context.close({ reason: 'Global context cleanup (connection terminated)' })));
+    await Promise.all(Array.from(this._isolatedContexts).map(context => context.close({ reason: 'Global context cleanup (connection terminated)' })));
   }
-}
-
-async function newContextForReuse(browser: Browser, scope: BrowserDispatcher, params: channels.BrowserNewContextForReuseParams, selectors: Selectors | null, metadata: CallMetadata): Promise<channels.BrowserNewContextForReuseResult> {
-  const { context, needsReset } = await browser.newContextForReuse(params, metadata);
-  if (needsReset) {
-    const oldContextDispatcher = existingDispatcher<BrowserContextDispatcher>(context);
-    if (oldContextDispatcher)
-      oldContextDispatcher._dispose();
-    await context.resetForReuse(metadata, params);
-  }
-  if (selectors)
-    context.setSelectors(selectors);
-  const contextDispatcher = new BrowserContextDispatcher(scope, context);
-  return { context: contextDispatcher };
 }

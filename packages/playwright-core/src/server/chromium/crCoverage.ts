@@ -15,12 +15,15 @@
  * limitations under the License.
  */
 
-import type { CRSession } from './crConnection';
-import type { RegisteredListener } from '../../utils/eventsHelper';
-import { eventsHelper } from '../../utils/eventsHelper';
-import type { Protocol } from './protocol';
-import type * as channels from '@protocol/channels';
 import { assert } from '../../utils';
+import { eventsHelper } from '../utils/eventsHelper';
+
+import type { CRSession } from './crConnection';
+import type { Protocol } from './protocol';
+import type { RegisteredListener } from '../utils/eventsHelper';
+import type * as channels from '@protocol/channels';
+import type { Progress } from '@protocol/progress';
+
 
 export class CRCoverage {
   private _jsCoverage: JSCoverage;
@@ -31,16 +34,18 @@ export class CRCoverage {
     this._cssCoverage = new CSSCoverage(client);
   }
 
-  async startJSCoverage(options: channels.PageStartJSCoverageParams) {
-    return await this._jsCoverage.start(options);
+  async startJSCoverage(progress: Progress, options: channels.PageStartJSCoverageParams) {
+    progress.cleanupWhenAborted(() => this._jsCoverage.stop());
+    await progress.race(this._jsCoverage.start(options));
   }
 
   async stopJSCoverage(): Promise<channels.PageStopJSCoverageResult> {
     return await this._jsCoverage.stop();
   }
 
-  async startCSSCoverage(options: channels.PageStartCSSCoverageParams) {
-    return await this._cssCoverage.start(options);
+  async startCSSCoverage(progress: Progress, options: channels.PageStartCSSCoverageParams) {
+    progress.cleanupWhenAborted(() => this._cssCoverage.stop());
+    await progress.race(this._cssCoverage.start(options));
   }
 
   async stopCSSCoverage(): Promise<channels.PageStopCSSCoverageResult> {
@@ -113,8 +118,8 @@ class JSCoverage {
   }
 
   async stop(): Promise<channels.PageStopJSCoverageResult> {
-    assert(this._enabled, 'JSCoverage is not enabled');
-    this._enabled = false;
+    if (!this._enabled)
+      return { entries: [] };
     const [profileResponse] = await Promise.all([
       this._client.send('Profiler.takePreciseCoverage'),
       this._client.send('Profiler.stopPreciseCoverage'),
@@ -122,6 +127,7 @@ class JSCoverage {
       this._client.send('Debugger.disable'),
     ] as const);
     eventsHelper.removeEventListeners(this._eventListeners);
+    this._enabled = false;
 
     const coverage: channels.PageStopJSCoverageResult = { entries: [] };
     for (const entry of profileResponse.result) {
@@ -195,14 +201,15 @@ class CSSCoverage {
   }
 
   async stop(): Promise<channels.PageStopCSSCoverageResult> {
-    assert(this._enabled, 'CSSCoverage is not enabled');
-    this._enabled = false;
+    if (!this._enabled)
+      return { entries: [] };
     const ruleTrackingResponse = await this._client.send('CSS.stopRuleUsageTracking');
     await Promise.all([
       this._client.send('CSS.disable'),
       this._client.send('DOM.disable'),
     ]);
     eventsHelper.removeEventListeners(this._eventListeners);
+    this._enabled = false;
 
     // aggregate by styleSheetId
     const styleSheetIdToCoverage = new Map();

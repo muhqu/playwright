@@ -511,13 +511,13 @@ test('should support toHaveURL with baseURL from webServer', async ({ runInlineT
       import { test, expect } from '@playwright/test';
 
       test('pass', async ({ page }) => {
-        await page.goto('/foobar');
-        await expect(page).toHaveURL('/foobar');
-        await expect(page).toHaveURL('http://localhost:${port}/foobar');
+        await page.goto('/hello');
+        await expect(page).toHaveURL('/hello');
+        await expect(page).toHaveURL('http://localhost:${port}/hello');
       });
 
       test('fail', async ({ page }) => {
-        await page.goto('/foobar');
+        await page.goto('/hello');
         await expect(page).toHaveURL('/kek', { timeout: 1000 });
       });
       `,
@@ -543,11 +543,31 @@ test('should respect expect.timeout', async ({ runInlineTest }) => {
     'playwright.config.js': `module.exports = { expect: { timeout: 1000 } }`,
     'a.test.ts': `
       import { test, expect } from '@playwright/test';
+      import { stripVTControlCharacters } from 'node:util';
 
       test('timeout', async ({ page }) => {
         await page.goto('data:text/html,<div>A</div>');
         const error = await expect(page).toHaveURL('data:text/html,<div>B</div>').catch(e => e);
-        expect(error.message).toContain('expect.toHaveURL with timeout 1000ms');
+        expect(stripVTControlCharacters(error.message)).toContain('Timed out 1000ms waiting for expect(page).toHaveURL(expected)');
+        expect(error.message).toContain('data:text/html,<div>');
+      });
+      `,
+  }, { workers: 1 });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+});
+
+test('should support toHaveURL predicate', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'playwright.config.js': `module.exports = { expect: { timeout: 1000 } }`,
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      import { stripVTControlCharacters } from 'node:util';
+
+      test('predicate', async ({ page }) => {
+        await page.goto('data:text/html,<div>A</div>');
+        const error = await expect(page).toHaveURL(url => url === 'data:text/html,<div>B</div>').catch(e => e);
+        expect(stripVTControlCharacters(error.message)).toContain('Timed out 1000ms waiting for expect(page).toHaveURL(expected)');
         expect(error.message).toContain('data:text/html,<div>');
       });
       `,
@@ -614,6 +634,33 @@ test('should print pending operations for toHaveText', async ({ runInlineTest })
   expect(output).toContain('Expected string: "Text"');
   expect(output).toContain('Received: <element(s) not found>');
   expect(output).toContain('waiting for locator(\'no-such-thing\')');
+});
+
+test('should only highlight unmatched regex in diff message for toHaveText with array', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+
+      test('toHaveText with mixed strings and regexes (array)', async ({ page }) => {
+        await page.setContent(\`
+          <ul>
+            <li>Coffee</li>
+            <li>Tea</li>
+            <li>Milk</li>
+          </ul>
+        \`);
+
+        const items = page.locator('li');
+        await expect(items).toHaveText(['Coffee', /\\d+/, /Milk/]);
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(1);
+  const output = result.output;
+  expect(output).toContain('-   /\\d+/,');
+  expect(output).toContain('+   "Tea",');
+  expect(output).not.toContain('-   /Milk/,');
+  expect(output).not.toContain('-   "Coffee",');
 });
 
 test('should print expected/received on Ctrl+C', async ({ interactWithTestRunner }) => {
@@ -715,11 +762,16 @@ test('should chain expect matchers and expose matcher utils (TSC)', async ({ run
         let pass: boolean;
         let matcherResult: any;
         try {
-          await baseExpect(baseAmount).toHaveAttribute('data-amount', expected, options);
+          const expectation = this.isNot ? baseExpect(baseAmount).not : baseExpect(baseAmount);
+          await expectation.toHaveAttribute('data-amount', expected, options);
           pass = true;
         } catch (e: any) {
           matcherResult = e.matcherResult;
           pass = false;
+        }
+
+        if (this.isNot) {
+            pass = !pass;
         }
 
         const expectOptions = {
@@ -795,11 +847,16 @@ test('should chain expect matchers and expose matcher utils', async ({ runInline
         let pass: boolean;
         let matcherResult: any;
         try {
-          await baseExpect(baseAmount).toHaveAttribute('data-amount', expected, options);
+          const expectation = this.isNot ? baseExpect(baseAmount).not : baseExpect(baseAmount);
+          await expectation.toHaveAttribute('data-amount', expected, options);
           pass = true;
         } catch (e: any) {
           matcherResult = e.matcherResult;
           pass = false;
+        }
+
+        if (this.isNot) {
+            pass = !pass;
         }
 
         const expectOptions = {
@@ -841,7 +898,7 @@ test('should chain expect matchers and expose matcher utils', async ({ runInline
   }, { workers: 1 });
   const output = stripAnsi(result.output);
   expect(output).toContain(`await expect(page.locator('div')).toHaveAmount('3', { timeout: 1000 });`);
-  expect(output).toContain('a.spec.ts:60');
+  expect(output).toContain('a.spec.ts:65');
   expect(result.failed).toBe(1);
   expect(result.exitCode).toBe(1);
 });
@@ -1068,4 +1125,175 @@ test('expect.extend should be immutable', async ({ runInlineTest }) => {
     'foo',
     'bar',
   ]);
+});
+
+test('expect.extend should fall back to legacy behavior', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'expect-test.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      expect.extend({
+        toFoo() {
+          console.log('%%foo');
+          return { pass: true };
+        }
+      });
+      expect.extend({
+        toFoo() {
+          console.log('%%foo2');
+          return { pass: true };
+        }
+      });
+      expect.extend({
+        toBar() {
+          console.log('%%bar');
+          return { pass: true };
+        }
+      });
+      test('logs', () => {
+        expect().toFoo();
+        expect().toBar();
+      });
+    `
+  });
+  expect(result.outputLines).toEqual([
+    'foo2',
+    'bar',
+  ]);
+});
+
+test('custom asymmetric matchers should work with expect.extend', async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'expect-test.spec.ts': `
+      import { test, expect as baseExpect, mergeExpects } from '@playwright/test';
+      const expect1 = baseExpect.extend({
+        isFoo(received: unknown, expected: string) {
+          return { pass: received === 'foo', message: () => '' };
+        },
+      });
+      const expect2 = baseExpect.extend({
+        isSomething(received: unknown, expected: string) {
+          return { pass: received === expected, message: () => '' };
+        },
+      });
+      const expect = mergeExpects(expect1, expect2);
+      test('example', () => {
+        expect('foo').toEqual(expect.isFoo());
+        expect('bar').toEqual(expect.isSomething('bar'));
+        try {
+          expect('foo2').toEqual(expect.isFoo());
+          console.log('should not run 1');
+        } catch (e) {
+        }
+        try {
+          expect('bar2').toEqual(expect.isSomething('bar'));
+          console.log('should not run 2');
+        } catch (e) {
+        }
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(1);
+  expect(result.output).not.toContain('should not run');
+});
+
+test('custom asymmetric matchers should function', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35138' } }, async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'expect-test.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      expect.extend({
+        isUndefined(received: unknown, expected: string) {
+          return { pass: received === undefined, message: () => '' };
+        }
+      });
+      test('example', () => {
+        expect(undefined).toEqual(expect.isUndefined());
+      });
+      test('example2', () => {
+        expect({
+          aProperty: undefined,
+          bProperty: 'foo',
+        }).toEqual({
+          aProperty: expect.isUndefined(),
+          bProperty: 'foo',
+          cProperty: expect.isUndefined(),
+        });
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.passed).toBe(2);
+});
+
+test('single custom asymmetric matcher should present the correct error', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35138' } }, async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'expect-test.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      expect.extend({
+        isUndefined(received: unknown, expected: string) {
+          return { pass: received === undefined, message: () => '' };
+        }
+      });
+      test('example', () => {
+        expect({
+          aProperty: 'foo'
+        }).toEqual({
+          aProperty: expect.isUndefined()
+        });
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.passed).toBe(0);
+  expect(result.output).toContain('-   \"aProperty\": isUndefined<>');
+  expect(result.output).toContain('+   \"aProperty\": \"foo\"');
+});
+
+test('multiple custom asymmetric matchers should present the correct error', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35138' } }, async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'expect-test.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      expect.extend({
+        isUndefined(received: unknown, expected: string) {
+          return { pass: received === undefined, message: () => '' };
+        }
+      });
+      test('example', () => {
+        expect({
+          aProperty: undefined,
+          bProperty: 'foo',
+        }).toEqual({
+          aProperty: expect.isUndefined(),
+          bProperty: expect.isUndefined()
+        });
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.passed).toBe(0);
+  expect(result.output).toContain('-   \"bProperty\": isUndefined<>');
+  expect(result.output).toContain('+   \"bProperty\": \"foo\"');
+});
+
+test('multiple custom asymmetric matchers in async expect should present the correct error', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35138' } }, async ({ runInlineTest }) => {
+  const result = await runInlineTest({
+    'expect-test.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      expect.extend({
+        isUndefined(received: unknown, expected: string) {
+          return { pass: received === undefined, message: () => '' };
+        }
+      });
+      test('example', async () => {
+        await expect.poll(() => ({ aProperty: 'foo', bProperty: undefined })).toEqual({
+          aProperty: expect.isUndefined(),
+          bProperty: expect.isUndefined(),
+        });
+      });
+    `,
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.passed).toBe(0);
+  expect(result.output).toContain('-   \"aProperty\": isUndefined<>');
+  expect(result.output).toContain('+   \"aProperty\": \"foo\"');
 });

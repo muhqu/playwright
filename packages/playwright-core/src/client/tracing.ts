@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import type * as api from '../../types/types';
-import type * as channels from '@protocol/channels';
 import { Artifact } from './artifact';
 import { ChannelOwner } from './channelOwner';
+
+import type * as api from '../../types/types';
+import type * as channels from '@protocol/channels';
 
 export class Tracing extends ChannelOwner<channels.TracingChannel> implements api.Tracing {
   private _includeSources = false;
@@ -31,7 +32,6 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
 
   constructor(parent: ChannelOwner, type: string, guid: string, initializer: channels.TracingInitializer) {
     super(parent, type, guid, initializer);
-    this.markAsInternalType();
   }
 
   async start(options: { name?: string, title?: string, snapshots?: boolean, screenshots?: boolean, sources?: boolean, _live?: boolean } = {}) {
@@ -51,13 +51,21 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
     await this._startCollectingStacks(traceName);
   }
 
+  async group(name: string, options: { location?: { file: string, line?: number, column?: number } } = {}) {
+    await this._channel.tracingGroup({ name, location: options.location });
+  }
+
+  async groupEnd() {
+    await this._channel.tracingGroupEnd();
+  }
+
   private async _startCollectingStacks(traceName: string) {
     if (!this._isTracing) {
       this._isTracing = true;
       this._connection.setIsTracing(true);
     }
-    const result = await this._connection.localUtils()._channel.tracingStarted({ tracesDir: this._tracesDir, traceName });
-    this._stacksId = result.stacksId;
+    const result = await this._connection.localUtils()?.tracingStarted({ tracesDir: this._tracesDir, traceName });
+    this._stacksId = result?.stacksId;
   }
 
   async stopChunk(options: { path?: string } = {}) {
@@ -76,15 +84,19 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
       // Not interested in artifacts.
       await this._channel.tracingStopChunk({ mode: 'discard' });
       if (this._stacksId)
-        await this._connection.localUtils()._channel.traceDiscarded({ stacksId: this._stacksId });
+        await this._connection.localUtils()!.traceDiscarded({ stacksId: this._stacksId });
       return;
     }
+
+    const localUtils = this._connection.localUtils();
+    if (!localUtils)
+      throw new Error('Cannot save trace in thin clients');
 
     const isLocal = !this._connection.isRemote();
 
     if (isLocal) {
       const result = await this._channel.tracingStopChunk({ mode: 'entries' });
-      await this._connection.localUtils()._channel.zip({ zipFile: filePath, entries: result.entries!, mode: 'write', stacksId: this._stacksId, includeSources: this._includeSources });
+      await localUtils.zip({ zipFile: filePath, entries: result.entries!, mode: 'write', stacksId: this._stacksId, includeSources: this._includeSources });
       return;
     }
 
@@ -93,7 +105,7 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
     // The artifact may be missing if the browser closed while stopping tracing.
     if (!result.artifact) {
       if (this._stacksId)
-        await this._connection.localUtils()._channel.traceDiscarded({ stacksId: this._stacksId });
+        await localUtils.traceDiscarded({ stacksId: this._stacksId });
       return;
     }
 
@@ -102,7 +114,7 @@ export class Tracing extends ChannelOwner<channels.TracingChannel> implements ap
     await artifact.saveAs(filePath);
     await artifact.delete();
 
-    await this._connection.localUtils()._channel.zip({ zipFile: filePath, entries: [], mode: 'append', stacksId: this._stacksId, includeSources: this._includeSources });
+    await localUtils.zip({ zipFile: filePath, entries: [], mode: 'append', stacksId: this._stacksId, includeSources: this._includeSources });
   }
 
   _resetStackCounter() {

@@ -40,6 +40,11 @@
   margin: 4px 8px;
 }
 
+.attachment-title-highlight {
+  text-decoration: underline var(--vscode-terminal-findMatchBackground);
+  text-decoration-thickness: 1.5px;
+}
+
 .attachment-item img {
   flex: none;
   min-width: 200px;
@@ -49,4 +54,12 @@
 
 a.codicon-cloud-download:hover{
   background-color: var(--vscode-list-inactiveSelectionBackground)
+}
+
+.yellow-flash {
+  animation: yellowflash-bg 2s;
+}
+@keyframes yellowflash-bg {
+  from { background: var(--vscode-peekViewEditor-matchHighlightBackground); }
+  to   { background: transparent; }
 }

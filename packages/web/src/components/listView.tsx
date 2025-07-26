@@ -16,7 +16,7 @@
 
 import * as React from 'react';
 import './listView.css';
-import { clsx } from '@web/uiUtils';
+import { clsx, scrollIntoViewIfNeeded } from '../uiUtils';
 
 export type ListViewProps<T> = {
   name: string,
@@ -24,15 +24,13 @@ export type ListViewProps<T> = {
   id?: (item: T, index: number) => string,
   render: (item: T, index: number) => React.ReactNode,
   icon?: (item: T, index: number) => string | undefined,
-  indent?: (item: T, index: number) => number | undefined,
   isError?: (item: T, index: number) => boolean,
   isWarning?: (item: T, index: number) => boolean,
   isInfo?: (item: T, index: number) => boolean,
+  ariaLabel?: string,
   selectedItem?: T,
   onAccepted?: (item: T, index: number) => void,
   onSelected?: (item: T, index: number) => void,
-  onLeftArrow?: (item: T, index: number) => void,
-  onRightArrow?: (item: T, index: number) => void,
   onHighlighted?: (item: T | undefined) => void,
   onIconClicked?: (item: T, index: number) => void,
   noItemsMessage?: string,
@@ -51,17 +49,15 @@ export function ListView<T>({
   isError,
   isWarning,
   isInfo,
-  indent,
   selectedItem,
   onAccepted,
   onSelected,
-  onLeftArrow,
-  onRightArrow,
   onHighlighted,
   onIconClicked,
   noItemsMessage,
   dataTestId,
   notSelectable,
+  ariaLabel,
 }: ListViewProps<T>) {
   const itemListRef = React.useRef<HTMLDivElement>(null);
   const [highlightedItem, setHighlightedItem] = React.useState<any>();
@@ -86,7 +82,7 @@ export function ListView<T>({
       itemListRef.current.scrollTop = scrollPositions.get(name) || 0;
   }, [name]);
 
-  return <div className={clsx(`list-view vbox`, name + '-list-view')} role={items.length > 0 ? 'list' : undefined} data-testid={dataTestId || (name + '-list')}>
+  return <div className={clsx(`list-view vbox`, name + '-list-view')} role={items.length > 0 ? 'list' : undefined} aria-label={ariaLabel}>
     <div
       className={clsx('list-view-content', notSelectable && 'not-selectable')}
       tabIndex={0}
@@ -95,20 +91,11 @@ export function ListView<T>({
           onAccepted?.(selectedItem, items.indexOf(selectedItem));
           return;
         }
-        if (event.key !== 'ArrowDown' &&  event.key !== 'ArrowUp' && event.key !== 'ArrowLeft' &&  event.key !== 'ArrowRight')
+        if (event.key !== 'ArrowDown' &&  event.key !== 'ArrowUp')
           return;
 
         event.stopPropagation();
         event.preventDefault();
-
-        if (selectedItem && event.key === 'ArrowLeft') {
-          onLeftArrow?.(selectedItem, items.indexOf(selectedItem));
-          return;
-        }
-        if (selectedItem && event.key === 'ArrowRight') {
-          onRightArrow?.(selectedItem, items.indexOf(selectedItem));
-          return;
-        }
 
         const index = selectedItem ? items.indexOf(selectedItem) : -1;
         let newIndex = index;
@@ -135,7 +122,6 @@ export function ListView<T>({
     >
       {noItemsMessage && items.length === 0 && <div className='list-view-empty'>{noItemsMessage}</div>}
       {items.map((item, index) => {
-        const indentation = indent?.(item, index) || 0;
         const rendered = render(item, index);
         return <div
           key={id?.(item, index) || index}
@@ -148,12 +134,11 @@ export function ListView<T>({
               isError?.(item, index) && 'error',
               isWarning?.(item, index) && 'warning',
               isInfo?.(item, index) && 'info')}
+          aria-selected={selectedItem === item}
           onClick={() => onSelected?.(item, index)}
           onMouseEnter={() => setHighlightedItem(item)}
           onMouseLeave={() => setHighlightedItem(undefined)}
         >
-          {/* eslint-disable-next-line react/jsx-key */}
-          {indentation ? new Array(indentation).fill(0).map(() => <div className='list-view-indent'></div>) : undefined}
           {icon && <div
             className={'codicon ' + (icon(item, index) || 'codicon-blank')}
             style={{ minWidth: 16, marginRight: 4 }}
@@ -172,13 +157,4 @@ export function ListView<T>({
       })}
     </div>
   </div>;
-}
-
-function scrollIntoViewIfNeeded(element: Element | undefined) {
-  if (!element)
-    return;
-  if ((element as any)?.scrollIntoViewIfNeeded)
-    (element as any).scrollIntoViewIfNeeded(false);
-  else
-    element?.scrollIntoView();
 }

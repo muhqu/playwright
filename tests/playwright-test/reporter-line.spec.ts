@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import path from 'path';
 import { test, expect } from './playwright-test-fixtures';
 
 for (const useIntermediateMergeReport of [false, true] as const) {
@@ -125,9 +126,9 @@ for (const useIntermediateMergeReport of [false, true] as const) {
             });
           });
         `,
-      }, { reporter: 'line' });
+      }, { reporter: 'line' }, { PLAYWRIGHT_FORCE_TTY: '1' });
       const text = result.output;
-      expect(text).toContain('[1/1] a.test.ts:6:26 › passes › outer › inner');
+      expect(text).toContain('[1/1] a.test.ts:3:15 › passes › outer › inner');
       expect(result.exitCode).toBe(0);
     });
 
@@ -186,6 +187,24 @@ for (const useIntermediateMergeReport of [false, true] as const) {
       }, { reporter: 'line' });
       const text = result.output;
       expect(text).toContain('1) a.test.ts:3:15 › passes ──');
+      expect(result.exitCode).toBe(1);
+    });
+
+    test('should show error context with relative path', async ({ runInlineTest, useIntermediateMergeReport }) => {
+      const result = await runInlineTest({
+        'a.test.js': `
+          const { test, expect } = require('@playwright/test');
+          test('one', async ({ page }) => {
+            await page.setContent('<div>hello</div>');
+            expect(1).toBe(0);
+          });
+        `,
+      }, { reporter: 'line' });
+      const text = result.output;
+      if (useIntermediateMergeReport)
+        expect(text).toContain(`Error Context: ${path.join('blob-report', 'resources')}`);
+      else
+        expect(text).toContain(`Error Context: ${path.join('test-results', 'a-one', 'error-context.md')}`);
       expect(result.exitCode).toBe(1);
     });
   });

@@ -15,12 +15,14 @@
  * limitations under the License.
  */
 
-import type { EventEmitter } from 'events';
-import type * as types from './types';
+import { debugLogger } from './utils/debugLogger';
+import { eventsHelper } from './utils/eventsHelper';
+
 import type { Progress } from './progress';
-import { debugLogger } from '../utils/debugLogger';
-import type { RegisteredListener } from '../utils/eventsHelper';
-import { eventsHelper } from '../utils/eventsHelper';
+import type * as types from './types';
+import type { RegisteredListener } from './utils/eventsHelper';
+import type { EventEmitter } from 'events';
+
 
 const MAX_LOG_LENGTH = process.env.MAX_LOG_LENGTH ? +process.env.MAX_LOG_LENGTH : Infinity;
 
@@ -53,7 +55,7 @@ class Helper {
     return null;
   }
 
-  static waitForEvent(progress: Progress | null, emitter: EventEmitter, event: string | symbol, predicate?: Function): { promise: Promise<any>, dispose: () => void } {
+  static waitForEvent(progress: Progress, emitter: EventEmitter, event: string | symbol, predicate?: Function): { promise: Promise<any>, dispose: () => void } {
     const listeners: RegisteredListener[] = [];
     const promise = new Promise((resolve, reject) => {
       listeners.push(eventsHelper.addEventListener(emitter, event, eventArg => {
@@ -69,9 +71,8 @@ class Helper {
       }));
     });
     const dispose = () => eventsHelper.removeEventListeners(listeners);
-    if (progress)
-      progress.cleanupWhenAborted(dispose);
-    return { promise, dispose };
+    progress.cleanupWhenAborted(dispose);
+    return { promise: progress.race(promise), dispose };
   }
 
   static secondsToRoundishMillis(value: number): number {

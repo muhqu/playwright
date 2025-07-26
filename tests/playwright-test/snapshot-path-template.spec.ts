@@ -138,3 +138,17 @@ test('arg should receive default arg', async ({ runInlineTest }, testInfo) => {
   expect(fs.existsSync(snapshotOutputPath)).toBe(true);
 });
 
+test('should throw for unknown snapshot kind', async ({ runInlineTest }, testInfo) => {
+  const result = await runInlineTest({
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('is a test', async ({}) => {
+        test.info().snapshotPath('foo', { kind: 'bar' });
+      });
+    `
+  });
+
+  expect(result.exitCode).toBe(1);
+  expect(result.passed).toBe(0);
+  expect(result.output).toContain(`testInfo.snapshotPath: unknown kind "bar"`);
+});

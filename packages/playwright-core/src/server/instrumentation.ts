@@ -15,15 +15,21 @@
  */
 
 import { EventEmitter } from 'events';
-import { createGuid } from '../utils';
-import type { APIRequestContext } from './fetch';
+
+import { createGuid } from './utils/crypto';
+
 import type { Browser } from './browser';
 import type { BrowserContext } from './browserContext';
 import type { BrowserType } from './browserType';
-import type { ElementHandle } from './dom';
+import type { Dialog } from './dialog';
+import type { Download } from './download';
+import type { APIRequestContext } from './fetch';
 import type { Frame } from './frames';
 import type { Page } from './page';
 import type { Playwright } from './playwright';
+import type { CallMetadata } from '@protocol/callMetadata';
+export type { CallMetadata } from '@protocol/callMetadata';
+import type { LogName } from './utils/debugLogger';
 
 export type Attribution = {
   playwright: Playwright;
@@ -34,15 +40,11 @@ export type Attribution = {
   frame?: Frame;
 };
 
-import type { CallMetadata } from '@protocol/callMetadata';
-import type { Dialog } from './dialog';
-import type { Download } from './download';
-export type { CallMetadata } from '@protocol/callMetadata';
-
 export class SdkObject extends EventEmitter {
   guid: string;
   attribution: Attribution;
   instrumentation: Instrumentation;
+  logName?: LogName;
 
   constructor(parent: SdkObject, guidPrefix?: string, guid?: string) {
     super();
@@ -53,11 +55,18 @@ export class SdkObject extends EventEmitter {
   }
 }
 
+export function createRootSdkObject() {
+  const fakeParent = { attribution: {}, instrumentation: createInstrumentation() };
+  const root = new SdkObject(fakeParent as any);
+  root.guid = '';
+  return root;
+}
+
 export interface Instrumentation {
   addListener(listener: InstrumentationListener, context: BrowserContext | APIRequestContext | null): void;
   removeListener(listener: InstrumentationListener): void;
   onBeforeCall(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
-  onBeforeInputAction(sdkObject: SdkObject, metadata: CallMetadata, element: ElementHandle): Promise<void>;
+  onBeforeInputAction(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
   onCallLog(sdkObject: SdkObject, metadata: CallMetadata, logName: string, message: string): void;
   onAfterCall(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
   onPageOpen(page: Page): void;
@@ -70,7 +79,7 @@ export interface Instrumentation {
 
 export interface InstrumentationListener {
   onBeforeCall?(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
-  onBeforeInputAction?(sdkObject: SdkObject, metadata: CallMetadata, element: ElementHandle): Promise<void>;
+  onBeforeInputAction?(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
   onCallLog?(sdkObject: SdkObject, metadata: CallMetadata, logName: string, message: string): void;
   onAfterCall?(sdkObject: SdkObject, metadata: CallMetadata): Promise<void>;
   onPageOpen?(page: Page): void;

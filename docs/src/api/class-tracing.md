@@ -3,6 +3,12 @@
 
 API for collecting and saving Playwright traces. Playwright traces can be opened in [Trace Viewer](../trace-viewer.md) after Playwright script runs.
 
+:::note
+You probably want to [enable tracing in your config file](https://playwright.dev/docs/api/class-testoptions#test-options-trace) instead of using `context.tracing`.
+
+The `context.tracing` API captures browser operations and network activity, but it doesn't record test assertions (like `expect` calls). We recommend [enabling tracing through Playwright Test configuration](https://playwright.dev/docs/api/class-testoptions#test-options-trace), which includes those assertions and provides a more complete trace for debugging test failures.
+:::
+
 Start recording a trace before performing actions. At the end, stop tracing and save it to a file.
 
 ```js
@@ -11,6 +17,7 @@ const context = await browser.newContext();
 await context.tracing.start({ screenshots: true, snapshots: true });
 const page = await context.newPage();
 await page.goto('https://playwright.dev');
+expect(page.url()).toBe('https://playwright.dev');
 await context.tracing.stop({ path: 'trace.zip' });
 ```
 
@@ -66,12 +73,19 @@ await context.Tracing.StopAsync(new()
 
 Start tracing.
 
+:::note
+You probably want to [enable tracing in your config file](https://playwright.dev/docs/api/class-testoptions#test-options-trace) instead of using `Tracing.start`.
+
+The `context.tracing` API captures browser operations and network activity, but it doesn't record test assertions (like `expect` calls). We recommend [enabling tracing through Playwright Test configuration](https://playwright.dev/docs/api/class-testoptions#test-options-trace), which includes those assertions and provides a more complete trace for debugging test failures.
+:::
+
 **Usage**
 
 ```js
 await context.tracing.start({ screenshots: true, snapshots: true });
 const page = await context.newPage();
 await page.goto('https://playwright.dev');
+expect(page.url()).toBe('https://playwright.dev');
 await context.tracing.stop({ path: 'trace.zip' });
 ```
 
@@ -121,7 +135,7 @@ await context.Tracing.StopAsync(new()
 - `name` <[string]>
 
 If specified, intermediate trace files are going to be saved into the files with the
-given name prefix inside the [`option: tracesDir`] folder specified in [`method: BrowserType.launch`].
+given name prefix inside the [`option: BrowserType.launch.tracesDir`] directory specified in [`method: BrowserType.launch`].
 To specify the final trace zip file name, you need to pass `path` option to
 [`method: Tracing.stop`] instead.
 
@@ -277,9 +291,83 @@ Trace name to be shown in the Trace Viewer.
 - `name` <[string]>
 
 If specified, intermediate trace files are going to be saved into the files with the
-given name prefix inside the [`option: tracesDir`] folder specified in [`method: BrowserType.launch`].
+given name prefix inside the [`option: BrowserType.launch.tracesDir`] directory specified in [`method: BrowserType.launch`].
 To specify the final trace zip file name, you need to pass `path` option to
 [`method: Tracing.stopChunk`] instead.
+
+## async method: Tracing.group
+* since: v1.49
+
+:::caution
+Use `test.step` instead when available.
+:::
+
+Creates a new group within the trace, assigning any subsequent API calls to this group, until [`method: Tracing.groupEnd`] is called. Groups can be nested and will be visible in the trace viewer.
+
+**Usage**
+
+```js
+// use test.step instead
+await test.step('Log in', async () => {
+  // ...
+});
+```
+
+```java
+// All actions between group and groupEnd
+// will be shown in the trace viewer as a group.
+page.context().tracing().group("Open Playwright.dev > API");
+page.navigate("https://playwright.dev/");
+page.getByRole(AriaRole.LINK, new Page.GetByRoleOptions().setName("API")).click();
+page.context().tracing().groupEnd();
+```
+
+```python sync
+# All actions between group and group_end
+# will be shown in the trace viewer as a group.
+page.context.tracing.group("Open Playwright.dev > API")
+page.goto("https://playwright.dev/")
+page.get_by_role("link", name="API").click()
+page.context.tracing.group_end()
+```
+
+```python async
+# All actions between group and group_end
+# will be shown in the trace viewer as a group.
+await page.context.tracing.group("Open Playwright.dev > API")
+await page.goto("https://playwright.dev/")
+await page.get_by_role("link", name="API").click()
+await page.context.tracing.group_end()
+```
+
+```csharp
+// All actions between GroupAsync and GroupEndAsync
+// will be shown in the trace viewer as a group.
+await Page.Context.Tracing.GroupAsync("Open Playwright.dev > API");
+await Page.GotoAsync("https://playwright.dev/");
+await Page.GetByRole(AriaRole.Link, new() { Name = "API" }).ClickAsync();
+await Page.Context.Tracing.GroupEndAsync();
+```
+
+### param: Tracing.group.name
+* since: v1.49
+- `name` <[string]>
+
+Group name shown in the trace viewer.
+
+### option: Tracing.group.location
+* since: v1.49
+- `location` ?<[Object]>
+  - `file` <[string]>
+  - `line` ?<[int]>
+  - `column` ?<[int]>
+
+Specifies a custom location for the group to be shown in the trace viewer. Defaults to the location of the [`method: Tracing.group`] call.
+
+## async method: Tracing.groupEnd
+* since: v1.49
+
+Closes the last group created by [`method: Tracing.group`].
 
 ## async method: Tracing.stop
 * since: v1.12

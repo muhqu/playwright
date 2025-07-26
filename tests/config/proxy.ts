@@ -18,15 +18,22 @@ import type { IncomingMessage } from 'http';
 import type { ProxyServer } from '../third_party/proxy';
 import { createProxy } from '../third_party/proxy';
 import net from 'net';
-import type { SocksSocketClosedPayload, SocksSocketDataPayload, SocksSocketRequestedPayload } from '../../packages/playwright-core/src/common/socksProxy';
-import { SocksProxy } from '../../packages/playwright-core/lib/common/socksProxy';
+import type { SocksSocketClosedPayload, SocksSocketDataPayload, SocksSocketRequestedPayload } from 'playwright-core/src/server/utils/socksProxy';
+import { SocksProxy } from '../../packages/playwright-core/lib/server/utils/socksProxy';
+
+// Certain browsers perform telemetry requests which we want to ignore.
+const kConnectHostsToIgnore = new Set([
+  'www.bing.com:443',
+]);
 
 export class TestProxy {
+  readonly HOST: string;
   readonly PORT: number;
   readonly URL: string;
 
   connectHosts: string[] = [];
   requestUrls: string[] = [];
+  wsUrls: string[] = [];
 
   private readonly _server: ProxyServer;
   private readonly _sockets = new Set<net.Socket>();
@@ -41,6 +48,7 @@ export class TestProxy {
   private constructor(port: number) {
     this.PORT = port;
     this.URL = `http://localhost:${port}`;
+    this.HOST = new URL(this.URL).host;
     this._server = createProxy();
     this._server.on('connection', socket => this._onSocket(socket));
   }
@@ -53,18 +61,40 @@ export class TestProxy {
     await new Promise(x => this._server.close(x));
   }
 
-  forwardTo(port: number, options?: { allowConnectRequests: boolean }) {
+  forwardTo(port: number, options?: { allowConnectRequests?: boolean, prefix?: string, preserveHostname?: boolean }) {
     this._prependHandler('request', (req: IncomingMessage) => {
       this.requestUrls.push(req.url);
-      const url = new URL(req.url);
-      url.host = `127.0.0.1:${port}`;
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      if (options?.preserveHostname)
+        url.port = '' + port;
+      else
+        url.host = `127.0.0.1:${port}`;
+      if (options?.prefix)
+        url.pathname = url.pathname.replace(options.prefix, '');
       req.url = url.toString();
     });
     this._prependHandler('connect', (req: IncomingMessage) => {
       if (!options?.allowConnectRequests)
         return;
+      if (kConnectHostsToIgnore.has(req.url))
+        return;
       this.connectHosts.push(req.url);
       req.url = `127.0.0.1:${port}`;
+    });
+    this._prependHandler('upgrade', (req: IncomingMessage) => {
+      this.wsUrls.push(req.url);
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      if (options?.preserveHostname)
+        url.port = '' + port;
+      else
+        url.host = `127.0.0.1:${port}`;
+      if (options?.prefix)
+        url.pathname = url.pathname.replace(options.prefix, '');
+      if (url.protocol === 'ws:')
+        url.protocol = 'http:';
+      else if (url.protocol === 'wss:')
+        url.protocol = 'https:';
+      req.url = url.toString();
     });
   }
 

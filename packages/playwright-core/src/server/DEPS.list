@@ -1,18 +1,18 @@
 [*]
-../common/
 ../generated/
 ../protocol/
-../utils/
+../utils
 ../utils/isomorphic/
 ../utilsBundle.ts
 ../zipBundle.ts
 ./
-./injected/
+./codegen/
 ./isomorphic/
 ./har/
 ./recorder/
 ./registry/
 ./trace/recorder/tracing.ts
+./utils/
 
 [playwright.ts]
 ./android/

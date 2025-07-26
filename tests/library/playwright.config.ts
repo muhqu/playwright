@@ -16,6 +16,7 @@
 
 import { config as loadEnv } from 'dotenv';
 loadEnv({ path: path.join(__dirname, '..', '..', '.env'), override: true });
+process.env.PWTEST_UNDER_TEST = '1';
 
 import { type Config, type PlaywrightTestOptions, type PlaywrightWorkerOptions, type ReporterDescription } from '@playwright/test';
 import * as path from 'path';
@@ -47,7 +48,7 @@ const reporters = () => {
     ['json', { outputFile: path.join(outputDir, 'report.json') }],
     ['blob', { fileName: `${process.env.PWTEST_BOT_NAME}.zip` }],
   ] : [
-    ['html', { open: 'on-failure' }]
+    ['html', { open: 'on-failure', title: 'Playwright Library Tests' }]
   ];
   return result;
 };
@@ -64,7 +65,6 @@ if (mode === 'service') {
     command: 'npx playwright run-server --port=3333',
     url: 'http://localhost:3333',
     reuseExistingServer: !process.env.CI,
-    env: { PWTEST_UNDER_TEST: '1' }
   };
 }
 if (mode === 'service2') {
@@ -126,13 +126,7 @@ for (const browserName of browserNames) {
     metadata: {
       platform: process.platform,
       docker: !!process.env.INSIDE_DOCKER,
-      headless: (() => {
-        if (process.env.PLAYWRIGHT_CHROMIUM_USE_HEADLESS_NEW)
-          return 'headless-new';
-        if (headed)
-          return 'headed';
-        return 'headless';
-      })(),
+      headless: headed ? 'headed' : 'headless',
       browserName,
       channel,
       mode,
@@ -152,17 +146,6 @@ for (const browserName of browserNames) {
     name: `${browserName}-page`,
     testDir: path.join(testDir, 'page'),
     ...projectTemplate,
-  });
-
-  config.projects.push({
-    name: `${browserName}-codegen-mode-trace`,
-    testDir: path.join(testDir, 'library'),
-    testMatch: '**/cli-codegen-*.spec.ts',
-    ...projectTemplate,
-    use: {
-      ...projectTemplate.use,
-      codegenMode: 'trace-events',
-    }
   });
 }
 

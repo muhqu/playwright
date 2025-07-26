@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { Reporter, TestCase, TestResult, TestStep } from '../../packages/playwright-test/reporter';
 import { test, expect } from './playwright-test-fixtures';
 
 const smallReporterJS = `
@@ -86,7 +87,7 @@ class Reporter {
 
   onStepEnd(test, result, step) {
     if (this.options.printSteps) {
-      console.log('onStepEnd: ' + step.title);
+      console.log('onStepEnd: [' + step.category + '] ' + step.title);
       if (step.error)
         this.printErrors([step.error]);
     }
@@ -478,8 +479,8 @@ var import_test = __toModule(require("@playwright/test"));
       expect(result.output).toBe(`
 onBegin: 1 tests total
 onTestBegin:  > a.spec.js > test; retry #0
-onStepEnd: Before Hooks
-onStepEnd: expect.toBe
+onStepEnd: [hook] Before Hooks
+onStepEnd: [expect] toBe
   error: Error: expect(received).toBe(expected) // Object.is equality @ a.spec.js:5
   ======
     3 |           test('test', async () => {
@@ -490,7 +491,7 @@ onStepEnd: expect.toBe
     7 |           });
     8 |
   ======
-onStepEnd: step
+onStepEnd: [test.step] step
   error: Error: expect(received).toBe(expected) // Object.is equality @ a.spec.js:5
   ======
     3 |           test('test', async () => {
@@ -501,8 +502,8 @@ onStepEnd: step
     7 |           });
     8 |
   ======
-onStepEnd: After Hooks
-onStepEnd: Worker Cleanup
+onStepEnd: [hook] After Hooks
+onStepEnd: [hook] Worker Cleanup
 onTestEnd:  > a.spec.js > test; retry #0
   error: Error: expect(received).toBe(expected) // Object.is equality @ a.spec.js:5
   ======
@@ -583,7 +584,9 @@ test('should report annotations from test declaration', async ({ runInlineTest }
           const visit = suite => {
             for (const test of suite.tests || []) {
               const annotations = test.annotations.map(a => {
-                return a.description ? a.type + '=' + a.description : a.type;
+                const description = a.description ? a.type + '=' + a.description : a.type;
+                const location = a.location ? '(' + a.location.line + ':' + a.location.column + ')' : '';
+                return description + location;
               });
               console.log('\\n%%title=' + test.title + ', annotations=' + annotations.join(','));
             }
@@ -608,7 +611,7 @@ test('should report annotations from test declaration', async ({ runInlineTest }
         expect(test.info().annotations).toEqual([]);
       });
       test('foo', { annotation: { type: 'foo' } }, () => {
-        expect(test.info().annotations).toEqual([{ type: 'foo' }]);
+        expect(test.info().annotations).toEqual([{ type: 'foo', location: { file: expect.any(String), line: 6, column: 11 } }]);
       });
       test('foo-bar', {
         annotation: [
@@ -617,8 +620,8 @@ test('should report annotations from test declaration', async ({ runInlineTest }
         ],
       }, () => {
         expect(test.info().annotations).toEqual([
-          { type: 'foo', description: 'desc' },
-          { type: 'bar' },
+          { type: 'foo', description: 'desc', location: { file: expect.any(String), line: 9, column: 11 } },
+          { type: 'bar', location: { file: expect.any(String), line: 9, column: 11 } },
         ]);
       });
       test.skip('skip-foo', { annotation: { type: 'foo' } }, () => {
@@ -635,11 +638,14 @@ test('should report annotations from test declaration', async ({ runInlineTest }
       });
       test.describe('suite', { annotation: { type: 'foo' } }, () => {
         test('foo-suite', () => {
-          expect(test.info().annotations).toEqual([{ type: 'foo' }]);
+          expect(test.info().annotations).toEqual([{ type: 'foo', location: { file: expect.any(String), line: 32, column: 12 } }]);
         });
         test.describe('inner', { annotation: { type: 'bar' } }, () => {
           test('foo-bar-suite', () => {
-            expect(test.info().annotations).toEqual([{ type: 'foo' }, { type: 'bar' }]);
+            expect(test.info().annotations).toEqual([
+              { type: 'foo', location: { file: expect.any(String), line: 32, column: 12 } },
+              { type: 'bar', location: { file: expect.any(String), line: 36, column: 14 } }
+            ]);
           });
         });
       });
@@ -656,15 +662,15 @@ test('should report annotations from test declaration', async ({ runInlineTest }
   expect(result.exitCode).toBe(0);
   expect(result.outputLines).toEqual([
     `title=none, annotations=`,
-    `title=foo, annotations=foo`,
-    `title=foo-bar, annotations=foo=desc,bar`,
-    `title=skip-foo, annotations=foo,skip`,
-    `title=fixme-bar, annotations=bar,fixme`,
-    `title=fail-foo-bar, annotations=foo,bar=desc,fail`,
-    `title=foo-suite, annotations=foo`,
-    `title=foo-bar-suite, annotations=foo,bar`,
-    `title=skip-foo-suite, annotations=foo,skip`,
-    `title=fixme-bar-suite, annotations=bar,fixme`,
+    `title=foo, annotations=foo(6:11)`,
+    `title=foo-bar, annotations=foo=desc(9:11),bar(9:11)`,
+    `title=skip-foo, annotations=foo(20:12),skip(20:12)`,
+    `title=fixme-bar, annotations=bar(22:12),fixme(22:12)`,
+    `title=fail-foo-bar, annotations=foo(24:12),bar=desc(24:12),fail(24:12)`,
+    `title=foo-suite, annotations=foo(32:12)`,
+    `title=foo-bar-suite, annotations=foo(32:12),bar(36:14)`,
+    `title=skip-foo-suite, annotations=foo(45:21),skip(45:21)`,
+    `title=fixme-bar-suite, annotations=bar(49:21),fixme(49:21)`,
   ]);
 });
 
@@ -702,4 +708,100 @@ onTestEnd: [passed]  > a.spec.ts > test2; retry #1
 onEnd
 onExit
 `);
+});
+
+test('step attachments are referentially equal to result attachments', async ({ runInlineTest }) => {
+  class TestReporter implements Reporter {
+    onStepEnd(test: TestCase, result: TestResult, step: TestStep) {
+      console.log('%%%', JSON.stringify({
+        title: step.title,
+        attachments: step.attachments.map(a => result.attachments.indexOf(a)),
+      }));
+    }
+  }
+  const result = await runInlineTest({
+    'reporter.ts': `module.exports = ${TestReporter.toString()}`,
+    'playwright.config.ts': `module.exports = { reporter: './reporter' };`,
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('test', async ({}, testInfo) => {
+        await test.step('step', async () => {
+          testInfo.attachments.push({ name: 'attachment', body: Buffer.from('content') });
+        });
+      });
+    `,
+  }, { 'reporter': '', 'workers': 1 });
+
+  const steps = result.outputLines.map(line => JSON.parse(line));
+  expect(steps).toEqual([
+    { title: 'Before Hooks', attachments: [] },
+    { title: 'step', attachments: [0] },
+    { title: 'After Hooks', attachments: [] },
+  ]);
+});
+
+test('step.attach attachments are reported on right steps', async ({ runInlineTest }) => {
+  class TestReporter implements Reporter {
+    onStepEnd(test: TestCase, result: TestResult, step: TestStep) {
+      console.log('%%%', JSON.stringify({
+        title: step.title,
+        attachments: step.attachments.map(a => ({ ...a, body: a.body.toString('utf8') })),
+      }));
+    }
+  }
+  const result = await runInlineTest({
+    'reporter.ts': `module.exports = ${TestReporter.toString()}`,
+    'playwright.config.ts': `module.exports = { reporter: './reporter' };`,
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test.beforeAll(async () => {
+        await test.step('step in beforeAll', async (step) => {
+          await step.attach('attachment1', { body: 'content1' });
+        });
+      });
+      test('test', async () => {
+        await test.step('step', async (step) => {
+          await step.attach('attachment2', { body: 'content2' });
+        });
+      });
+    `,
+  }, { 'reporter': '', 'workers': 1 });
+
+  const steps = result.outputLines.map(line => JSON.parse(line));
+  expect(steps).toEqual([
+    { title: 'step in beforeAll', attachments: [{ body: 'content1', contentType: 'text/plain', name: 'attachment1' }] },
+    { title: 'beforeAll hook', attachments: [] },
+    { title: 'Before Hooks', attachments: [] },
+    { title: 'step', attachments: [{ body: 'content2', contentType: 'text/plain', name: 'attachment2' }] },
+    { title: 'After Hooks', attachments: [] },
+  ]);
+});
+
+test('attachments are reported in onStepEnd', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/14364' } }, async ({ runInlineTest }) => {
+  class TestReporter implements Reporter {
+    onStepEnd(test: TestCase, result: TestResult, step: TestStep) {
+      console.log(`%%[${step.category}] ${step.title}: ${result.attachments.length} attachments in result`);
+    }
+  }
+  const result = await runInlineTest({
+    'reporter.ts': `module.exports = ${TestReporter.toString()}`,
+    'playwright.config.ts': `module.exports = { reporter: './reporter' };`,
+    'a.spec.ts': `
+      import { test, expect } from '@playwright/test';
+      test('test', async ({}, testInfo) => {
+        await test.step('step', async () => {
+          testInfo.attachments.push({ name: 'attachment', body: Buffer.from('content') });
+        });
+
+        await testInfo.attach('4', {body:'444'})
+      });
+    `,
+  }, { 'reporter': '', 'workers': 1 });
+
+  expect(result.outputLines).toEqual([
+    '[hook] Before Hooks: 0 attachments in result',
+    '[test.step] step: 1 attachments in result',
+    '[test.attach] 4: 2 attachments in result',
+    '[hook] After Hooks: 2 attachments in result',
+  ]);
 });

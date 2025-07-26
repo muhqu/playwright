@@ -15,15 +15,16 @@
  */
 
 import { EventEmitter } from 'events';
-import { assert } from '../../utils';
-import type { ConnectionTransport, ProtocolRequest, ProtocolResponse } from '../transport';
-import type { RecentLogsCollector } from '../../utils/debugLogger';
-import { debugLogger } from '../../utils/debugLogger';
-import type { ProtocolLogger } from '../types';
+
+import { debugLogger } from '../utils/debugLogger';
 import { helper } from '../helper';
 import { ProtocolError } from '../protocolError';
-import type * as bidi from './third_party/bidiProtocol';
+
+import type { RecentLogsCollector } from '../utils/debugLogger';
+import type { ConnectionTransport, ProtocolRequest, ProtocolResponse } from '../transport';
+import type { ProtocolLogger } from '../types';
 import type * as bidiCommands from './third_party/bidiCommands';
+import type * as bidi from './third_party/bidiProtocol';
 
 // BidiPlaywright uses this special id to issue Browser.close command which we
 // should ignore.
@@ -224,7 +225,6 @@ export class BidiSession extends EventEmitter {
       }
     } else if (object.id) {
       // Response might come after session has been disposed and rejected all callbacks.
-      assert(this.isDisposed());
     } else {
       Promise.resolve().then(() => this.emit(object.method, object.params));
     }

@@ -33,7 +33,7 @@ it('should use proxy @smoke', async ({ browserType, server, mode }) => {
     res.end('<html><title>Served by the proxy</title></html>');
   });
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}` }
+    proxy: { server: server.HOST }
   });
   const page = await browser.newPage();
   await page.goto('http://non-existent.com/target.html');
@@ -135,7 +135,7 @@ it('should authenticate', async ({ browserType, server }) => {
     }
   });
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}`, username: 'user', password: 'secret' }
+    proxy: { server: server.HOST, username: 'user', password: 'secret' }
   });
   const page = await browser.newPage();
   await page.goto('http://non-existent.com/target.html');
@@ -167,7 +167,7 @@ it('should work with authenticate followed by redirect', async ({ browserName, b
     res.end('<html><title>Served by the proxy</title></html>');
   });
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}`, username: 'user', password: 'secret' }
+    proxy: { server: server.HOST, username: 'user', password: 'secret' }
   });
   const page = await browser.newPage();
   await page.goto('http://non-existent.com/page1.html');
@@ -184,7 +184,7 @@ it('should exclude patterns', async ({ browserType, server, browserName, headles
   //
   // @see https://gist.github.com/CollinChaffin/24f6c9652efb3d6d5ef2f5502720ef00
   const browser = await browserType.launch({
-    proxy: { server: `localhost:${server.PORT}`, bypass: '1.non.existent.domain.for.the.test, 2.non.existent.domain.for.the.test, .another.test' }
+    proxy: { server: server.HOST, bypass: '1.non.existent.domain.for.the.test, 2.non.existent.domain.for.the.test, .another.test' }
   });
 
   {
@@ -321,4 +321,40 @@ it('should use SOCKS proxy for websocket requests', async ({ browserType, server
 
   await browser.close();
   await closeProxyServer();
+});
+
+it('should use http proxy for websocket requests', async ({ browserName, browserType, server, proxyServer, isWindows, isMac, macVersion }) => {
+  it.skip(isMac && macVersion === 13, 'Times out on Mac 13');
+
+  proxyServer.forwardTo(server.PORT, { allowConnectRequests: true });
+  const browser = await browserType.launch({
+    proxy: { server: `localhost:${proxyServer.PORT}` }
+  });
+
+  server.sendOnWebSocketConnection('incoming');
+  server.setRoute('/target.html', async (req, res) => {
+    res.end('<html><title>Served by the proxy</title></html>');
+  });
+
+  const page = await browser.newPage();
+
+  await page.goto('http://fake-localhost-127-0-0-1.nip.io:1337/target.html');
+  expect(await page.title()).toBe('Served by the proxy');
+
+  const value = await page.evaluate(() => {
+    let cb;
+    const result = new Promise(f => cb = f);
+    const ws = new WebSocket('ws://fake-localhost-127-0-0-1.nip.io:1337/ws');
+    ws.addEventListener('message', data => { ws.close(); cb(data.data); });
+    return result;
+  });
+  expect(value).toBe('incoming');
+
+  // WebKit does not use CONNECT for websockets, but other browsers do.
+  if (browserName === 'webkit')
+    expect(proxyServer.wsUrls).toContain(isWindows ? '/ws' : 'ws://fake-localhost-127-0-0-1.nip.io:1337/ws');
+  else
+    expect(proxyServer.connectHosts).toContain('fake-localhost-127-0-0-1.nip.io:1337');
+
+  await browser.close();
 });

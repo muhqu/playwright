@@ -19,23 +19,26 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type { Command } from '../utilsBundle';
-import { program, dotenv } from '../utilsBundle';
-export { program } from '../utilsBundle';
-import { runDriver, runServer, printApiJson, launchBrowserServer } from './driver';
-import { runTraceInBrowser, runTraceViewerApp } from '../server/trace/viewer/traceViewer';
-import type { TraceViewerServerOptions } from '../server/trace/viewer/traceViewer';
+
 import * as playwright from '../..';
-import type { BrowserContext } from '../client/browserContext';
-import type { Browser } from '../client/browser';
-import type { Page } from '../client/page';
-import type { BrowserType } from '../client/browserType';
-import type { BrowserContextOptions, LaunchOptions } from '../client/types';
-import { spawn } from 'child_process';
-import { wrapInASCIIBox, isLikelyNpxGlobal, assert, gracefullyProcessExitDoNotHang, getPackageManagerExecCommand } from '../utils';
-import type { Executable } from '../server';
+import { launchBrowserServer, printApiJson, runDriver, runServer } from './driver';
 import { registry, writeDockerVersion } from '../server';
-import { isTargetClosedError } from '../client/errors';
+import { gracefullyProcessExitDoNotHang, isLikelyNpxGlobal } from '../utils';
+import { runTraceInBrowser, runTraceViewerApp } from '../server/trace/viewer/traceViewer';
+import { assert, getPackageManagerExecCommand } from '../utils';
+import { wrapInASCIIBox } from '../server/utils/ascii';
+import { dotenv, program } from '../utilsBundle';
+
+import type { Browser } from '../client/browser';
+import type { BrowserContext } from '../client/browserContext';
+import type { BrowserType } from '../client/browserType';
+import type { Page } from '../client/page';
+import type { BrowserContextOptions, LaunchOptions } from '../client/types';
+import type { Executable, BrowserInfo } from '../server';
+import type { TraceViewerServerOptions } from '../server/trace/viewer/traceViewer';
+import type { Command } from '../utilsBundle';
+
+export { program } from '../utilsBundle';
 
 const packageJSON = require('../../package.json');
 
@@ -54,7 +57,7 @@ program
 
 commandWithOpenOptions('open [url]', 'open page in browser specified via -b, --browser', [])
     .action(function(url, options) {
-      open(options, url, codegenId()).catch(logErrorAndExit);
+      open(options, url).catch(logErrorAndExit);
     })
     .addHelpText('afterAll', `
 Examples:
@@ -66,10 +69,16 @@ commandWithOpenOptions('codegen [url]', 'open page and generate code for user ac
     [
       ['-o, --output <file name>', 'saves the generated script to a file'],
       ['--target <language>', `language to generate, one of javascript, playwright-test, python, python-async, python-pytest, csharp, csharp-mstest, csharp-nunit, java, java-junit`, codegenId()],
-      ['--save-trace <filename>', 'record a trace for the session and save it to a file'],
       ['--test-id-attribute <attributeName>', 'use the specified attribute to generate data test ID selectors'],
     ]).action(function(url, options) {
-  codegen(options, url).catch(logErrorAndExit);
+  codegen(options, url).catch(error => {
+    if (process.env.PWTEST_CLI_AUTO_EXIT_WHEN) {
+      // Tests with PWTEST_CLI_AUTO_EXIT_WHEN might close page too fast, resulting
+      // in a stray navigation aborted error. We should ignore it.
+    } else {
+      throw error;
+    }
+  });
 }).addHelpText('afterAll', `
 Examples:
 
@@ -77,48 +86,124 @@ Examples:
   $ codegen --target=python
   $ codegen -b webkit https://example.com`);
 
-program
-    .command('debug <app> [args...]', { hidden: true })
-    .description('run command in debug mode: disable timeout, open inspector')
-    .allowUnknownOption(true)
-    .action(function(app, options) {
-      spawn(app, options, {
-        env: { ...process.env, PWDEBUG: '1' },
-        stdio: 'inherit'
-      });
-    }).addHelpText('afterAll', `
-Examples:
-
-  $ debug node test.js
-  $ debug npm run test`);
-
 function suggestedBrowsersToInstall() {
   return registry.executables().filter(e => e.installType !== 'none' && e.type !== 'tool').map(e => e.name).join(', ');
 }
 
-function checkBrowsersToInstall(args: string[]): Executable[] {
+function defaultBrowsersToInstall(options: { noShell?: boolean, onlyShell?: boolean }): Executable[] {
+  let executables = registry.defaultExecutables();
+  if (options.noShell)
+    executables = executables.filter(e => e.name !== 'chromium-headless-shell');
+  if (options.onlyShell)
+    executables = executables.filter(e => e.name !== 'chromium');
+  return executables;
+}
+
+function checkBrowsersToInstall(args: string[], options: { noShell?: boolean, onlyShell?: boolean }): Executable[] {
+  if (options.noShell && options.onlyShell)
+    throw new Error(`Only one of --no-shell and --only-shell can be specified`);
+
   const faultyArguments: string[] = [];
   const executables: Executable[] = [];
-  for (const arg of args) {
+  const handleArgument = (arg: string) => {
     const executable = registry.findExecutable(arg);
     if (!executable || executable.installType === 'none')
       faultyArguments.push(arg);
     else
       executables.push(executable);
+    if (executable?.browserName === 'chromium')
+      executables.push(registry.findExecutable('ffmpeg')!);
+  };
+
+  for (const arg of args) {
+    if (arg === 'chromium') {
+      if (!options.onlyShell)
+        handleArgument('chromium');
+      if (!options.noShell)
+        handleArgument('chromium-headless-shell');
+    } else {
+      handleArgument(arg);
+    }
   }
+
+  if (process.platform === 'win32')
+    executables.push(registry.findExecutable('winldd')!);
+
   if (faultyArguments.length)
     throw new Error(`Invalid installation targets: ${faultyArguments.map(name => `'${name}'`).join(', ')}. Expecting one of: ${suggestedBrowsersToInstall()}`);
   return executables;
 }
 
+function printInstalledBrowsers(browsers: BrowserInfo[]) {
+  const browserPaths = new Set<string>();
+  for (const browser of browsers)
+    browserPaths.add(browser.browserPath);
+  console.log(`  Browsers:`);
+  for (const browserPath of [...browserPaths].sort())
+    console.log(`    ${browserPath}`);
+  console.log(`  References:`);
+
+  const references = new Set<string>();
+  for (const browser of browsers)
+    references.add(browser.referenceDir);
+  for (const reference of [...references].sort())
+    console.log(`    ${reference}`);
+}
+
+function printGroupedByPlaywrightVersion(browsers: BrowserInfo[]) {
+  const dirToVersion = new Map<string, string>();
+  for (const browser of browsers) {
+    if (dirToVersion.has(browser.referenceDir))
+      continue;
+    const packageJSON = require(path.join(browser.referenceDir, 'package.json'));
+    const version = packageJSON.version;
+    dirToVersion.set(browser.referenceDir, version);
+  }
+
+  const groupedByPlaywrightMinorVersion = new Map<string, BrowserInfo[]>();
+  for (const browser of browsers) {
+    const version = dirToVersion.get(browser.referenceDir)!;
+    let entries = groupedByPlaywrightMinorVersion.get(version);
+    if (!entries) {
+      entries = [];
+      groupedByPlaywrightMinorVersion.set(version, entries);
+    }
+    entries.push(browser);
+  }
+
+  const sortedVersions = [...groupedByPlaywrightMinorVersion.keys()].sort((a, b) => {
+    const aComponents = a.split('.');
+    const bComponents = b.split('.');
+    const aMajor = parseInt(aComponents[0], 10);
+    const bMajor = parseInt(bComponents[0], 10);
+    if (aMajor !== bMajor)
+      return aMajor - bMajor;
+    const aMinor = parseInt(aComponents[1], 10);
+    const bMinor = parseInt(bComponents[1], 10);
+    if (aMinor !== bMinor)
+      return aMinor - bMinor;
+    return aComponents.slice(2).join('.').localeCompare(bComponents.slice(2).join('.'));
+  });
+
+  for (const version of sortedVersions) {
+    console.log(`\nPlaywright version: ${version}`);
+    printInstalledBrowsers(groupedByPlaywrightMinorVersion.get(version)!);
+  }
+}
 
 program
     .command('install [browser...]')
     .description('ensure browsers necessary for this version of Playwright are installed')
     .option('--with-deps', 'install system dependencies for browsers')
     .option('--dry-run', 'do not execute installation, only print information')
+    .option('--list', 'prints list of browsers from all playwright installations')
     .option('--force', 'force reinstall of stable browser channels')
-    .action(async function(args: string[], options: { withDeps?: boolean, force?: boolean, dryRun?: boolean }) {
+    .option('--only-shell', 'only install headless shell when installing chromium')
+    .option('--no-shell', 'do not install chromium headless shell')
+    .action(async function(args: string[], options: { withDeps?: boolean, force?: boolean, dryRun?: boolean, list?: boolean, shell?: boolean, noShell?: boolean, onlyShell?: boolean }) {
+      // For '--no-shell' option, commander sets `shell: false` instead.
+      if (options.shell === false)
+        options.noShell = true;
       if (isLikelyNpxGlobal()) {
         console.error(wrapInASCIIBox([
           `WARNING: It looks like you are running 'npx playwright install' without first`,
@@ -141,9 +226,11 @@ program
       }
       try {
         const hasNoArguments = !args.length;
-        const executables = hasNoArguments ? registry.defaultExecutables() : checkBrowsersToInstall(args);
+        const executables = hasNoArguments ? defaultBrowsersToInstall(options) : checkBrowsersToInstall(args, options);
         if (options.withDeps)
           await registry.installDeps(executables, !!options.dryRun);
+        if (options.dryRun && options.list)
+          throw new Error(`Only one of --dry-run and --list can be specified`);
         if (options.dryRun) {
           for (const executable of executables) {
             const version = executable.browserVersion ? `version ` + executable.browserVersion : '';
@@ -157,6 +244,9 @@ program
             }
             console.log(``);
           }
+        } else if (options.list) {
+          const browsers = await registry.listInstalledBrowsers();
+          printGroupedByPlaywrightVersion(browsers);
         } else {
           const forceReinstall = hasNoArguments ? false : !!options.force;
           await registry.install(executables, forceReinstall);
@@ -199,9 +289,9 @@ program
     .action(async function(args: string[], options: { dryRun?: boolean }) {
       try {
         if (!args.length)
-          await registry.installDeps(registry.defaultExecutables(), !!options.dryRun);
+          await registry.installDeps(defaultBrowsersToInstall({}), !!options.dryRun);
         else
-          await registry.installDeps(checkBrowsersToInstall(args), !!options.dryRun);
+          await registry.installDeps(checkBrowsersToInstall(args, {}), !!options.dryRun);
       } catch (e) {
         console.log(`Failed to install browser dependencies\n${e}`);
         gracefullyProcessExitDoNotHang(1);
@@ -223,7 +313,7 @@ const browsers = [
 for (const { alias, name, type } of browsers) {
   commandWithOpenOptions(`${alias} [url]`, `open page in ${name}`, [])
       .action(function(url, options) {
-        open({ ...options, browser: type }, url, options.target).catch(logErrorAndExit);
+        open({ ...options, browser: type }, url).catch(logErrorAndExit);
       }).addHelpText('afterAll', `
 Examples:
 
@@ -244,6 +334,7 @@ Examples:
 
 commandWithOpenOptions('pdf <url> <filename>', 'save page as pdf',
     [
+      ['--paper-format <format>', 'paper format: Letter, Legal, Tabloid, Ledger, A0, A1, A2, A3, A4, A5, A6'],
       ['--wait-for-selector <selector>', 'wait for given selector before saving as pdf'],
       ['--wait-for-timeout <timeout>', 'wait for given timeout in milliseconds before saving as pdf'],
     ]).action(function(url, filename, options) {
@@ -260,7 +351,7 @@ program
     });
 
 program
-    .command('run-server', { hidden: true })
+    .command('run-server')
     .option('--port <port>', 'Server port')
     .option('--host <host>', 'Server host')
     .option('--path <path>', 'Endpoint Path', '/')
@@ -335,17 +426,18 @@ type Options = {
   saveHar?: string;
   saveHarGlob?: string;
   saveStorage?: string;
-  saveTrace?: string;
   timeout: string;
   timezone?: string;
   viewportSize?: string;
   userAgent?: string;
+  userDataDir?: string;
 };
 
 type CaptureOptions = {
   waitForSelector?: string;
   waitForTimeout?: string;
   fullPage: boolean;
+  paperFormat?: string;
 };
 
 async function launchContext(options: Options, extraOptions: LaunchOptions): Promise<{ browser: Browser, browserName: string, launchOptions: LaunchOptions, contextOptions: BrowserContextOptions, context: BrowserContext }> {
@@ -388,40 +480,15 @@ async function launchContext(options: Options, extraOptions: LaunchOptions): Pro
       launchOptions.proxy.bypass = options.proxyBypass;
   }
 
-  const browser = await browserType.launch(launchOptions);
-
-  if (process.env.PWTEST_CLI_IS_UNDER_TEST) {
-    (process as any)._didSetSourcesForTest = (text: string) => {
-      process.stdout.write('\n-------------8<-------------\n');
-      process.stdout.write(text);
-      process.stdout.write('\n-------------8<-------------\n');
-      const autoExitCondition = process.env.PWTEST_CLI_AUTO_EXIT_WHEN;
-      if (autoExitCondition && text.includes(autoExitCondition))
-        closeBrowser();
-    };
-    // Make sure we exit abnormally when browser crashes.
-    const logs: string[] = [];
-    require('playwright-core/lib/utilsBundle').debug.log = (...args: any[]) => {
-      const line = require('util').format(...args) + '\n';
-      logs.push(line);
-      process.stderr.write(line);
-    };
-    browser.on('disconnected', () => {
-      const hasCrashLine = logs.some(line => line.includes('process did exit:') && !line.includes('process did exit: exitCode=0, signal=null'));
-      if (hasCrashLine) {
-        process.stderr.write('Detected browser crash.\n');
-        gracefullyProcessExitDoNotHang(1);
-      }
-    });
-  }
-
   // Viewport size
   if (options.viewportSize) {
     try {
-      const [width, height] = options.viewportSize.split(',').map(n => parseInt(n, 10));
+      const [width, height] = options.viewportSize.split(',').map(n => +n);
+      if (isNaN(width) || isNaN(height))
+        throw new Error('bad values');
       contextOptions.viewport = { width, height };
     } catch (e) {
-      throw new Error('Invalid viewport size format: use "width, height", for example --viewport-size=800,600');
+      throw new Error('Invalid viewport size format: use "width,height", for example --viewport-size="800,600"');
     }
   }
 
@@ -477,9 +544,41 @@ async function launchContext(options: Options, extraOptions: LaunchOptions): Pro
     contextOptions.serviceWorkers = 'block';
   }
 
-  // Close app when the last window closes.
+  let browser: Browser;
+  let context: BrowserContext;
 
-  const context = await browser.newContext(contextOptions);
+  if (options.userDataDir) {
+    context = await browserType.launchPersistentContext(options.userDataDir, { ...launchOptions, ...contextOptions });
+    browser = context.browser()!;
+  } else {
+    browser = await browserType.launch(launchOptions);
+    context = await browser.newContext(contextOptions);
+  }
+
+  if (process.env.PWTEST_CLI_IS_UNDER_TEST) {
+    (process as any)._didSetSourcesForTest = (text: string) => {
+      process.stdout.write('\n-------------8<-------------\n');
+      process.stdout.write(text);
+      process.stdout.write('\n-------------8<-------------\n');
+      const autoExitCondition = process.env.PWTEST_CLI_AUTO_EXIT_WHEN;
+      if (autoExitCondition && text.includes(autoExitCondition))
+        closeBrowser();
+    };
+    // Make sure we exit abnormally when browser crashes.
+    const logs: string[] = [];
+    require('playwright-core/lib/utilsBundle').debug.log = (...args: any[]) => {
+      const line = require('util').format(...args) + '\n';
+      logs.push(line);
+      process.stderr.write(line);
+    };
+    browser.on('disconnected', () => {
+      const hasCrashLine = logs.some(line => line.includes('process did exit:') && !line.includes('process did exit: exitCode=0, signal=null'));
+      if (hasCrashLine) {
+        process.stderr.write('Detected browser crash.\n');
+        gracefullyProcessExitDoNotHang(1);
+      }
+    });
+  }
 
   let closingBrowser = false;
   async function closeBrowser() {
@@ -488,8 +587,6 @@ async function launchContext(options: Options, extraOptions: LaunchOptions): Pro
     if (closingBrowser)
       return;
     closingBrowser = true;
-    if (options.saveTrace)
-      await context.tracing.stop({ path: options.saveTrace });
     if (options.saveStorage)
       await context.storageState({ path: options.saveStorage }).catch(e => null);
     if (options.saveHar)
@@ -516,9 +613,6 @@ async function launchContext(options: Options, extraOptions: LaunchOptions): Pro
   context.setDefaultTimeout(timeout);
   context.setDefaultNavigationTimeout(timeout);
 
-  if (options.saveTrace)
-    await context.tracing.start({ screenshots: true, snapshots: true });
-
   // Omit options that we add automatically for presentation purpose.
   delete launchOptions.headless;
   delete launchOptions.executablePath;
@@ -528,33 +622,21 @@ async function launchContext(options: Options, extraOptions: LaunchOptions): Pro
 }
 
 async function openPage(context: BrowserContext, url: string | undefined): Promise<Page> {
-  const page = await context.newPage();
+  let page = context.pages()[0];
+  if (!page)
+    page = await context.newPage();
   if (url) {
     if (fs.existsSync(url))
       url = 'file://' + path.resolve(url);
     else if (!url.startsWith('http') && !url.startsWith('file://') && !url.startsWith('about:') && !url.startsWith('data:'))
       url = 'http://' + url;
-    await page.goto(url).catch(error => {
-      if (process.env.PWTEST_CLI_AUTO_EXIT_WHEN && isTargetClosedError(error)) {
-        // Tests with PWTEST_CLI_AUTO_EXIT_WHEN might close page too fast, resulting
-        // in a stray navigation aborted error. We should ignore it.
-      } else {
-        throw error;
-      }
-    });
+    await page.goto(url);
   }
   return page;
 }
 
-async function open(options: Options, url: string | undefined, language: string) {
-  const { context, launchOptions, contextOptions } = await launchContext(options, { headless: !!process.env.PWTEST_CLI_HEADLESS, executablePath: process.env.PWTEST_CLI_EXECUTABLE_PATH });
-  await context._enableRecorder({
-    language,
-    launchOptions,
-    contextOptions,
-    device: options.device,
-    saveStorage: options.saveStorage,
-  });
+async function open(options: Options, url: string | undefined) {
+  const { context } = await launchContext(options, { headless: !!process.env.PWTEST_CLI_HEADLESS, executablePath: process.env.PWTEST_CLI_EXECUTABLE_PATH });
   await openPage(context, url);
 }
 
@@ -574,9 +656,9 @@ async function codegen(options: Options & { target: string, output?: string, tes
     device: options.device,
     saveStorage: options.saveStorage,
     mode: 'recording',
-    codegenMode: process.env.PW_RECORDER_IS_TRACE_VIEWER ? 'trace-events' : 'actions',
     testIdAttributeName,
     outputFile: outputFile ? path.resolve(outputFile) : undefined,
+    handleSIGINT: false,
   });
   await openPage(context, url);
 }
@@ -611,7 +693,7 @@ async function pdf(options: Options, captureOptions: CaptureOptions, url: string
   const page = await openPage(context, url);
   await waitForPage(page, captureOptions);
   console.log('Saving as pdf into ' + path);
-  await page.pdf!({ path });
+  await page.pdf!({ path, format: captureOptions.paperFormat });
   // launchContext takes care of closing the browser.
   await page.close();
 }
@@ -681,6 +763,7 @@ function commandWithOpenOptions(command: string, description: string, options: a
       .option('--timezone <time zone>', 'time zone to emulate, for example "Europe/Rome"')
       .option('--timeout <timeout>', 'timeout for Playwright actions in milliseconds, no timeout by default')
       .option('--user-agent <ua string>', 'specify user agent string')
+      .option('--user-data-dir <directory>', 'use the specified user data directory instead of a new context')
       .option('--viewport-size <size>', 'specify browser viewport size in pixels, for example "1280, 720"');
 }
 

@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-import os from 'os';
 import { contextTest as it, expect } from '../config/browserTest';
 
 it('should return no cookies in pristine browser context', async ({ context, page, server }) => {
@@ -32,7 +31,7 @@ it('should get a cookie @smoke', async ({ context, page, server, defaultSameSite
   expect(await context.cookies()).toEqual([{
     name: 'username',
     value: 'John Doe',
-    domain: 'localhost',
+    domain: server.HOSTNAME,
     path: '/',
     expires: -1,
     httpOnly: false,
@@ -56,7 +55,7 @@ it('should get a non-session cookie', async ({ context, page, server, defaultSam
   expect(cookies[0]).toEqual({
     name: 'username',
     value: 'John Doe',
-    domain: 'localhost',
+    domain: server.HOSTNAME,
     path: '/',
     // We will check this separately.
     expires: expect.anything(),
@@ -123,7 +122,7 @@ it('should get multiple cookies', async ({ context, page, server, defaultSameSit
     {
       name: 'password',
       value: '1234',
-      domain: 'localhost',
+      domain: server.HOSTNAME,
       path: '/',
       expires: -1,
       httpOnly: false,
@@ -133,7 +132,7 @@ it('should get multiple cookies', async ({ context, page, server, defaultSameSit
     {
       name: 'username',
       value: 'John Doe',
-      domain: 'localhost',
+      domain: server.HOSTNAME,
       path: '/',
       expires: -1,
       httpOnly: false,
@@ -322,36 +321,7 @@ it('should add cookies with an expiration', async ({ context }) => {
   }])).rejects.toThrow(/Cookie should have a valid expires/);
 });
 
-it('should be able to send third party cookies via an iframe', async ({ browser, httpsServer, browserName, isMac }) => {
-  it.fixme(browserName === 'webkit' && isMac);
-  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/16937' });
-
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
-  });
-  try {
-    const page = await context.newPage();
-    await page.goto(httpsServer.EMPTY_PAGE);
-    await context.addCookies([{
-      domain: new URL(httpsServer.CROSS_PROCESS_PREFIX).hostname,
-      path: '/',
-      name: 'cookie1',
-      value: 'yes',
-      httpOnly: true,
-      secure: true,
-      sameSite: 'None'
-    }]);
-    const [response] = await Promise.all([
-      httpsServer.waitForRequest('/grid.html'),
-      page.setContent(`<iframe src="${httpsServer.CROSS_PROCESS_PREFIX}/grid.html"></iframe>`)
-    ]);
-    expect(response.headers['cookie']).toBe('cookie1=yes');
-  } finally {
-    await context.close();
-  }
-});
-
-it('should support requestStorageAccess', async ({ page, server, channel, browserName, isMac, isLinux, isWindows }) => {
+it('should support requestStorageAccess', async ({ page, server, channel, browserName, isMac, isLinux, isWindows, macVersion }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/17285' });
   it.skip(browserName === 'chromium', 'requestStorageAccess API is not available in Chromium');
   it.skip(channel === 'firefox-beta', 'hasStorageAccess returns true, but no cookie is sent');
@@ -397,7 +367,7 @@ it('should support requestStorageAccess', async ({ page, server, channel, browse
         server.waitForRequest('/title.html'),
         frame.evaluate(() => fetch('/title.html'))
       ]);
-      if ((isLinux || (isMac && parseInt(os.release(), 10) >= 24)) && browserName === 'webkit')
+      if (isLinux && browserName === 'webkit')
         expect(serverRequest.headers.cookie).toBe(undefined);
       else
         expect(serverRequest.headers.cookie).toBe('name=value');
@@ -407,7 +377,6 @@ it('should support requestStorageAccess', async ({ page, server, channel, browse
 
 it('should parse cookie with large Max-Age correctly', async ({ server, page, defaultSameSiteCookieValue, browserName, platform }) => {
   it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/30305' });
-  it.fixme(browserName === 'webkit' && platform === 'linux', 'https://github.com/microsoft/playwright/issues/30305');
 
   server.setRoute('/foobar', (req, res) => {
     res.setHeader('set-cookie', [
@@ -422,7 +391,7 @@ it('should parse cookie with large Max-Age correctly', async ({ server, page, de
     {
       name: 'cookie1',
       value: 'value1',
-      domain: 'localhost',
+      domain: server.HOSTNAME,
       path: '/',
       expires: expect.any(Number),
       httpOnly: false,
@@ -430,4 +399,35 @@ it('should parse cookie with large Max-Age correctly', async ({ server, page, de
       sameSite: defaultSameSiteCookieValue,
     },
   ]);
+});
+
+it('iframe should inherit cookies from parent', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/35439' } }, async ({ page, isLinux, browserName }) => {
+  it.fixme(browserName === 'webkit' && isLinux, 'https://bugs.webkit.org/show_bug.cgi?id=291194');
+
+  await page.route('**/*', async (route, request) => {
+    if (request.url().includes('sub.example.test')) {
+      await route.fulfill({
+        body: `
+            <p id="result"></p>
+            <script>document.getElementById('result').textContent = document.cookie || 'no cookies';</script>
+        `,
+        contentType: 'text/html',
+      });
+      return;
+    }
+    await route.fulfill({
+      headers: { 'set-cookie': 'testCookie=value; SameSite=Lax; Domain=example.test' },
+      contentType: 'text/html',
+      body: `
+          <p id="result"></p>
+          <script>document.getElementById('result').textContent = document.cookie || 'no cookies';</script>
+          <iframe src="http://sub.example.test"></iframe>
+      `
+    });
+  });
+
+  await page.goto('http://example.test');
+
+  await expect(page.locator('body')).toContainText('testCookie=value');
+  await expect(page.frameLocator('iframe').locator('body')).toContainText('testCookie=value');
 });

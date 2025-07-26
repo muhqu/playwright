@@ -1,8 +1,8 @@
 import assert from 'assert';
 import * as net from 'net';
-import * as url from 'url';
 import * as http from 'http';
 import * as os from 'os';
+import { pipeline } from 'stream/promises';
 
 const pkg = { version: '1.0.0' }
 
@@ -33,6 +33,7 @@ export function createProxy(server?: http.Server): ProxyServer {
 	if (!server) server = http.createServer();
 	server.on('request', onrequest);
 	server.on('connect', onconnect);
+	server.on('upgrade', onupgrade);
 	return server;
 }
 
@@ -99,7 +100,7 @@ async function onrequest(
 	}
 
 	socket.resume();
-	const parsed = url.parse(req.url || '/');
+	const parsed = new URL(req.url, 'http://localhost');
 
 	// setup outbound proxy request HTTP headers
 	const headers: http.OutgoingHttpHeaders = {};
@@ -195,8 +196,7 @@ async function onrequest(
 	}
 
 	let gotResponse = false;
-	const proxyReq = http.request({
-		...parsed,
+	const proxyReq = http.request(parsed, {
 		method: req.method,
 		headers,
 		localAddress: this.localAddress,
@@ -465,4 +465,31 @@ function requestAuthorization(
 	};
 	res.writeHead(407, headers);
 	res.end('Proxy authorization required');
+}
+
+function onupgrade(req: http.IncomingMessage, socket: net.Socket, head: Buffer) {
+	const proxyReq = http.request(req.url, {
+		method: req.method,
+		headers: req.headers,
+		localAddress: this.localAddress,
+	});
+
+  proxyReq.on('error', () => socket.destroy());
+	proxyReq.on('upgrade', async function (proxyRes, proxySocket, proxyHead) {
+		const header = ['HTTP/1.1 101 Switching Protocols'];
+		for (const [key, value] of Object.entries(proxyRes.headersDistinct))
+			header.push(`${key}: ${value}`);
+		socket.write(header.join('\r\n') + '\r\n\r\n');
+		if (proxyHead && proxyHead.length)
+      proxySocket.unshift(proxyHead);
+
+		proxySocket.pipe(socket);
+		socket.pipe(proxySocket);
+		proxySocket.on('error', () => socket.destroy());
+		socket.on('error', () => proxySocket.destroy());
+		proxySocket.on('end', () => socket.end());
+		socket.on('end', () => proxySocket.end());
+	});
+
+	proxyReq.end(head);
 }

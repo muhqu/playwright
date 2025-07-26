@@ -16,42 +16,31 @@
 
 import fs from 'fs';
 import path from 'path';
-import { ManualPromise, calculateSha1, createGuid, getUserAgent, removeFolders, sanitizeForFilePath } from 'playwright-core/lib/utils';
-import { mime } from 'playwright-core/lib/utilsBundle';
 import { Readable } from 'stream';
-import type { EventEmitter } from 'events';
-import type { FullConfig, FullResult, TestResult } from '../../types/testReporter';
-import type { JsonAttachment, JsonEvent } from '../isomorphic/teleReceiver';
-import { TeleReporterEmitter } from './teleEmitter';
-import { yazl } from 'playwright-core/lib/zipBundle';
-import { resolveOutputFile } from './base';
 
-type BlobReporterOptions = {
-  configDir: string;
-  outputDir?: string;
-  fileName?: string;
-  outputFile?: string;
-  _commandHash: string;
-};
+import { removeFolders, sanitizeForFilePath } from 'playwright-core/lib/utils';
+import { ManualPromise, calculateSha1, createGuid, getUserAgent } from 'playwright-core/lib/utils';
+import { mime } from 'playwright-core/lib/utilsBundle';
+import { yazl } from 'playwright-core/lib/zipBundle';
+
+import { resolveOutputFile, CommonReporterOptions } from './base';
+import { TeleReporterEmitter } from './teleEmitter';
+
+import type { BlobReporterOptions } from '../../types/test';
+import type { FullConfig, FullResult, TestResult } from '../../types/testReporter';
+import type { BlobReportMetadata, JsonAttachment, JsonEvent } from '../isomorphic/teleReceiver';
+import type { EventEmitter } from 'events';
 
 export const currentBlobReportVersion = 2;
-
-export type BlobReportMetadata = {
-  version: number;
-  userAgent: string;
-  name?: string;
-  shard?: { total: number, current: number };
-  pathSeparator?: string;
-};
 
 export class BlobReporter extends TeleReporterEmitter {
   private readonly _messages: JsonEvent[] = [];
   private readonly _attachments: { originalPath: string, zipEntryPath: string }[] = [];
-  private readonly _options: BlobReporterOptions;
+  private readonly _options: BlobReporterOptions & CommonReporterOptions;
   private readonly _salt: string;
   private _config!: FullConfig;
 
-  constructor(options: BlobReporterOptions) {
+  constructor(options: BlobReporterOptions & CommonReporterOptions) {
     super(message => this._messages.push(message));
     this._options = options;
     if (this._options.fileName && !this._options.fileName.endsWith('.zip'))

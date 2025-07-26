@@ -28,14 +28,14 @@ test('should watch files', async ({ runUITest, writeFiles }) => {
   });
 
   await page.getByText('fails').click();
-  await page.getByRole('listitem').filter({ hasText: 'fails' }).getByTitle('Watch').click();
+  await page.getByRole('treeitem', { name: 'fails' }).getByRole('button', { name: 'Watch' }).click();
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ◯ a.test.ts
         ◯ passes
         ◯ fails 👁 <=
   `);
 
-  await page.getByRole('listitem').filter({ hasText: 'fails' }).getByTitle('Run').click();
+  await page.getByRole('treeitem', { name: 'fails' }).getByRole('button', { name: 'Run' }).click();
 
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ❌ a.test.ts
@@ -75,7 +75,7 @@ test('should watch e2e deps', async ({ runUITest, writeFiles }) => {
   });
 
   await page.getByText('answer').click();
-  await page.getByRole('listitem').filter({ hasText: 'answer' }).getByTitle('Watch').click();
+  await page.getByRole('treeitem', { name: 'answer' }).getByRole('button', { name: 'Watch' }).click();
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ◯ a.test.ts
         ◯ answer 👁 <=
@@ -102,13 +102,13 @@ test('should batch watch updates', async ({ runUITest, writeFiles }) => {
   });
 
   await page.getByText('a.test.ts').click();
-  await page.getByRole('listitem').filter({ hasText: 'a.test.ts' }).getByTitle('Watch').click();
+  await page.getByRole('treeitem', { name: 'a.test.ts' }).getByRole('button', { name: 'Watch' }).click();
   await page.getByText('b.test.ts').click();
-  await page.getByRole('listitem').filter({ hasText: 'b.test.ts' }).getByTitle('Watch').click();
+  await page.getByRole('treeitem', { name: 'b.test.ts' }).getByRole('button', { name: 'Watch' }).click();
   await page.getByText('c.test.ts').click();
-  await page.getByRole('listitem').filter({ hasText: 'c.test.ts' }).getByTitle('Watch').click();
+  await page.getByRole('treeitem', { name: 'c.test.ts' }).getByRole('button', { name: 'Watch' }).click();
   await page.getByText('d.test.ts').click();
-  await page.getByRole('listitem').filter({ hasText: 'd.test.ts' }).getByTitle('Watch').click();
+  await page.getByRole('treeitem', { name: 'd.test.ts' }).getByRole('button', { name: 'Watch' }).click();
 
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ◯ a.test.ts 👁
@@ -229,7 +229,7 @@ test('should run added test in watched file', async ({ runUITest, writeFiles }) 
   });
 
   await page.getByText('a.test.ts').click();
-  await page.getByRole('listitem').filter({ hasText: 'a.test.ts' }).getByTitle('Watch').click();
+  await page.getByRole('treeitem', { name: 'a.test.ts' }).getByRole('button', { name: 'Watch' }).click();
 
   await expect.poll(dumpTestTree(page)).toBe(`
     ▼ ◯ a.test.ts 👁 <=
@@ -319,4 +319,33 @@ test('should not watch output', async ({ runUITest }) => {
   await expect(page.getByTestId('status-line')).toHaveText('1/1 passed (100%)');
   expect(commands).toContain('runTests');
   expect(commands).not.toContain('listTests');
+});
+
+
+test('should have watch icon highlighted when a test is focused and watch on the test is enabled', async ({ runUITest }) => {
+  const { page } = await runUITest({
+    'a.test.ts': `
+      import { test, expect } from '@playwright/test';
+      test('passes', () => {});
+    `,
+  });
+
+  await page.getByTestId('test-tree').getByText('a.test.ts').click();
+  // watch icon should not be highlight till the watch icon is clicked
+  await page.getByRole('treeitem', { name: 'passes' }).hover();
+  await expect(page.getByRole('treeitem', { name: 'passes' }).getByRole('button', { name: 'Watch' })).not.toHaveCSS('outline', 'rgb(255, 255, 255) solid 1px');
+
+  await page.getByRole('treeitem', { name: 'passes' }).getByRole('button', { name: 'Watch' }).click();
+  await expect(page.getByRole('treeitem', { name: 'passes' }).getByRole('button', { name: 'Watch' }).locator('.codicon-eye')).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await expect(page.getByRole('treeitem', { name: 'passes' }).getByRole('button', { name: 'Watch' })).toHaveCSS('outline', 'rgb(255, 255, 255) solid 1px');
+
+  // deselection of the tree-row should still show the watch icon when watch on tree row is active
+  await page.getByTestId('test-tree').getByText('a.test.ts').click();
+  await expect(page.getByRole('treeitem', { name: 'passes' }).getByRole('button', { name: 'Watch' })).toBeVisible();
+  await expect(page.getByRole('treeitem', { name: 'passes' }).getByRole('button', { name: 'Watch' })).not.toHaveCSS('outline', 'rgb(255, 255, 255) solid 1px');
+
+  await expect.poll(dumpTestTree(page)).toBe(`
+    ▼ ◯ a.test.ts <=
+        ◯ passes 👁
+  `);
 });

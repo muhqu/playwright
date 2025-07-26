@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
-import type { BrowserContextOptions } from '../../../types/types';
-import type { ActionInContext, Language, LanguageGenerator, LanguageGeneratorOptions } from './types';
 import { sanitizeDeviceOptions, toClickOptionsForSourceCode, toKeyboardModifiers, toSignalMap } from './language';
-import { escapeWithQuotes, asLocator } from '../../utils';
+import { asLocator, escapeWithQuotes } from '../../utils';
 import { deviceDescriptors } from '../deviceDescriptors';
+
+import type { Language, LanguageGenerator, LanguageGeneratorOptions } from './types';
+import type { BrowserContextOptions } from '../../../types/types';
+import type * as actions from '@recorder/actions';
 
 type CSharpLanguageMode = 'library' | 'mstest' | 'nunit';
 
@@ -45,20 +47,18 @@ export class CSharpLanguageGenerator implements LanguageGenerator {
     this._mode = mode;
   }
 
-  generateAction(actionInContext: ActionInContext): string {
+  generateAction(actionInContext: actions.ActionInContext): string {
     const action = this._generateActionInner(actionInContext);
     if (action)
       return action;
     return '';
   }
 
-  _generateActionInner(actionInContext: ActionInContext): string {
+  _generateActionInner(actionInContext: actions.ActionInContext): string {
     const action = actionInContext.action;
     if (this._mode !== 'library' && (action.name === 'openPage' || action.name === 'closePage'))
       return '';
-    let pageAlias = actionInContext.frame.pageAlias;
-    if (this._mode !== 'library')
-      pageAlias = pageAlias.replace('page', 'Page');
+    const  pageAlias = this._formatPageAlias(actionInContext.frame.pageAlias);
     const formatter = new CSharpFormatter(this._mode === 'library' ? 0 : 8);
 
     if (action.name === 'openPage') {
@@ -91,7 +91,7 @@ export class CSharpLanguageGenerator implements LanguageGenerator {
     }
 
     if (signals.popup) {
-      lines.unshift(`var ${signals.popup.popupAlias} = await ${pageAlias}.RunAndWaitForPopupAsync(async () =>\n{`);
+      lines.unshift(`var ${this._formatPageAlias(signals.popup.popupAlias)} = await ${pageAlias}.RunAndWaitForPopupAsync(async () =>\n{`);
       lines.push(`});`);
     }
 
@@ -101,7 +101,18 @@ export class CSharpLanguageGenerator implements LanguageGenerator {
     return formatter.format();
   }
 
-  private _generateActionCall(subject: string, actionInContext: ActionInContext): string {
+  private _formatPageAlias(pageAlias: string): string {
+    if (this._mode === 'library')
+      return pageAlias;
+
+    if (pageAlias === 'page')
+      return 'Page'; // first page is class member
+
+    // other pages are local variables
+    return pageAlias;
+  }
+
+  private _generateActionCall(subject: string, actionInContext: actions.ActionInContext): string {
     const action = actionInContext.action;
     switch (action.name) {
       case 'openPage':
@@ -145,6 +156,8 @@ export class CSharpLanguageGenerator implements LanguageGenerator {
         const assertion = action.value ? `ToHaveValueAsync(${quote(action.value)})` : `ToBeEmptyAsync()`;
         return `await Expect(${subject}.${this._asLocator(action.selector)}).${assertion};`;
       }
+      case 'assertSnapshot':
+        return `await Expect(${subject}.${this._asLocator(action.selector)}).ToMatchAriaSnapshotAsync(${quote(action.ariaSnapshot)});`;
     }
   }
 
@@ -168,6 +181,10 @@ export class CSharpLanguageGenerator implements LanguageGenerator {
       using var playwright = await Playwright.CreateAsync();
       await using var browser = await playwright.${toPascal(options.browserName)}.LaunchAsync(${formatObject(options.launchOptions, '    ', 'BrowserTypeLaunchOptions')});
       var context = await browser.NewContextAsync(${formatContextOptions(options.contextOptions, options.deviceName)});`);
+    if (options.contextOptions.recordHar) {
+      const url = options.contextOptions.recordHar.urlFilter;
+      formatter.add(`      await context.RouteFromHARAsync(${quote(options.contextOptions.recordHar.path)}${url ? `, ${formatObject({ url }, '    ', 'BrowserContextRouteFromHAROptions')}` : ''});`);
+    }
     formatter.newLine();
     return formatter.format();
   }
@@ -193,6 +210,10 @@ export class CSharpLanguageGenerator implements LanguageGenerator {
     formatter.add(`    [${this._mode === 'nunit' ? 'Test' : 'TestMethod'}]
     public async Task MyTest()
     {`);
+    if (options.contextOptions.recordHar) {
+      const url = options.contextOptions.recordHar.urlFilter;
+      formatter.add(`    await Context.RouteFromHARAsync(${quote(options.contextOptions.recordHar.path)}${url ? `, ${formatObject({ url }, '    ', 'BrowserContextRouteFromHAROptions')}` : ''});`);
+    }
     return formatter.format();
   }
 
@@ -258,32 +279,22 @@ function toPascal(value: string): string {
   return value[0].toUpperCase() + value.slice(1);
 }
 
-function convertContextOptions(options: BrowserContextOptions): any {
-  const result: any = { ...options };
-  if (options.recordHar) {
-    result['recordHarPath'] = options.recordHar.path;
-    result['recordHarContent'] = options.recordHar.content;
-    result['recordHarMode'] = options.recordHar.mode;
-    result['recordHarOmitContent'] = options.recordHar.omitContent;
-    result['recordHarUrlFilter'] = options.recordHar.urlFilter;
-    delete result.recordHar;
-  }
-  return result;
-}
-
-function formatContextOptions(options: BrowserContextOptions, deviceName: string | undefined): string {
+function formatContextOptions(contextOptions: BrowserContextOptions, deviceName: string | undefined): string {
+  let options = { ...contextOptions };
+  // recordHAR is replaced with routeFromHAR in the generated code.
+  delete options.recordHar;
   const device = deviceName && deviceDescriptors[deviceName];
   if (!device) {
     if (!Object.entries(options).length)
       return '';
-    return formatObject(convertContextOptions(options), '    ', 'BrowserNewContextOptions');
+    return formatObject(options, '    ', 'BrowserNewContextOptions');
   }
 
   options = sanitizeDeviceOptions(device, options);
   if (!Object.entries(options).length)
     return `playwright.Devices[${quote(deviceName!)}]`;
 
-  return formatObject(convertContextOptions(options), '    ', `BrowserNewContextOptions(playwright.Devices[${quote(deviceName!)}])`);
+  return formatObject(options, '    ', `BrowserNewContextOptions(playwright.Devices[${quote(deviceName!)}])`);
 }
 
 class CSharpFormatter {

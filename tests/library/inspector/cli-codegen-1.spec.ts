@@ -18,8 +18,6 @@ import { test, expect } from './inspectorTest';
 import type { ConsoleMessage } from 'playwright';
 
 test.describe('cli codegen', () => {
-  test.skip(({ mode }) => mode !== 'default');
-
   test('should click', async ({ openRecorder }) => {
     const { page, recorder } = await openRecorder();
 
@@ -91,6 +89,61 @@ await page.GetByRole(AriaRole.Button, new() { Name = "Submit" }).DblClickAsync()
       'click 2',
       'dblclick 2',
     ]);
+  });
+
+  test('should click twice', async ({ openRecorder }) => {
+    const { page, recorder } = await openRecorder();
+
+    await recorder.setContentAndWait(`<button onclick="console.log('click')">Submit</button>`);
+
+    const locator = await recorder.hoverOverElement('button');
+    expect(locator).toBe(`getByRole('button', { name: 'Submit' })`);
+
+    await Promise.all([
+      recorder.waitForOutput('JavaScript', 'click'),
+      recorder.trustedClick(),
+    ]);
+
+    // Do not trigger double click.
+    await page.waitForTimeout(200);
+
+    const [sources] = await Promise.all([
+      recorder.waitForOutput('JavaScript', `click();\n  await`),
+      recorder.trustedClick(),
+    ]);
+
+    expect(sources.get('JavaScript')!.text).toContain(`
+  await page.getByRole('button', { name: 'Submit' }).click();
+  await page.getByRole('button', { name: 'Submit' }).click();`);
+  });
+
+  test('should type after clicking twice', async ({ openRecorder }) => {
+    const { page, recorder } = await openRecorder();
+
+    await recorder.setContentAndWait(`<input type="text" value="foo"/>`);
+    const locator = await recorder.hoverOverElement('input');
+    expect(locator).toBe(`getByRole('textbox')`);
+
+    await Promise.all([
+      recorder.waitForOutput('JavaScript', 'click'),
+      recorder.trustedClick(),
+    ]);
+
+    // Do not trigger double click.
+    await page.waitForTimeout(200);
+
+    await Promise.all([
+      recorder.waitForOutput('JavaScript', `click();\n  await`),
+      recorder.trustedClick(),
+    ]);
+
+    await page.keyboard.type('bar');
+    const sources = await recorder.waitForOutput('JavaScript', 'bar');
+
+    expect(sources.get('JavaScript')!.text).toContain(`
+  await page.getByRole('textbox').click();
+  await page.getByRole('textbox').click();
+  await page.getByRole('textbox').fill('foobar');`);
   });
 
   test('should ignore programmatic events', async ({ openRecorder }) => {
@@ -409,7 +462,7 @@ await page.Locator("#input").FillAsync(\"てすと\");`);
     expect(sources.get('C#')!.text).toContain(`
 await page.GetByRole(AriaRole.Textbox).PressAsync("Shift+Enter");`);
 
-    expect(messages[0].text()).toBe('press');
+    expect(messages.map(m => m.text())).toContain('press');
   });
 
   test('should update selected element after pressing Tab', async ({ openRecorder }) => {
@@ -420,15 +473,32 @@ await page.GetByRole(AriaRole.Textbox).PressAsync("Shift+Enter");`);
       <input name="two"></input>
     `);
 
-    await page.click('input[name="one"]');
-    await recorder.waitForOutput('JavaScript', 'click');
-    await page.keyboard.type('foobar123');
-    await recorder.waitForOutput('JavaScript', 'foobar123');
+    const input1 = page.locator('input[name="one"]');
+    const input2 = page.locator('input[name="two"]');
 
-    await page.keyboard.press('Tab');
-    await recorder.waitForOutput('JavaScript', 'Tab');
-    await page.keyboard.type('barfoo321');
-    await recorder.waitForOutput('JavaScript', 'barfoo321');
+    {
+      await input1.click();
+      await recorder.waitForOutput('JavaScript', 'click');
+      await expect(input1).toBeFocused();
+    }
+
+    {
+      await page.keyboard.type('foobar123');
+      await recorder.waitForOutput('JavaScript', 'foobar123');
+      await expect(input1).toHaveValue('foobar123');
+    }
+
+    {
+      await page.keyboard.press('Tab');
+      await recorder.waitForOutput('JavaScript', 'Tab');
+      await expect(input2).toBeFocused();
+    }
+
+    {
+      await page.keyboard.type('barfoo321');
+      await recorder.waitForOutput('JavaScript', 'barfoo321');
+      await expect(input2).toHaveValue('barfoo321');
+    }
 
     const text = recorder.sources().get('JavaScript')!.text;
     expect(text).toContain(`
@@ -460,7 +530,7 @@ await page.GetByRole(AriaRole.Textbox).PressAsync("Shift+Enter");`);
     ]);
     expect(sources.get('JavaScript')!.text).toContain(`
   await page.getByRole('textbox').press('ArrowDown');`);
-    expect(messages[0].text()).toBe('press:ArrowDown');
+    expect(messages.map(m => m.text())).toContain('press:ArrowDown');
   });
 
   test('should emit single keyup on ArrowDown', async ({ openRecorder }) => {
@@ -556,6 +626,28 @@ await page.Locator("#checkbox").CheckAsync();`);
     expect(sources.get('JavaScript')!.text).toContain(`
   await page.locator('#checkbox').check();`);
     expect(message.text()).toBe('true');
+  });
+
+  test('should check with keyboard after hover', async ({ openRecorder }) => {
+    const { page, recorder } = await openRecorder();
+
+    await recorder.setContentAndWait(`<input id="checkbox" type="checkbox" name="accept" onchange="console.log(checkbox.checked)"></input>`);
+
+    await recorder.hoverOverElement('input');
+    await page.focus('input');
+
+    const [sources] = await Promise.all([
+      recorder.waitForOutput('JavaScript', 'check'),
+      page.keyboard.press('Space')
+    ]);
+
+    expect(sources.get('JavaScript')!.text).toContain(`
+  await page.locator('#checkbox').check();`);
+
+    const sources2 = await recorder.waitForOutput('JavaScript', 'check');
+    expect(sources2.get('JavaScript')!.text).not.toContain(`
+  await page.locator('#checkbox').check();
+  await page.locator('#checkbox').check();`);
   });
 
   test('should uncheck', async ({ openRecorder }) => {
@@ -664,23 +756,35 @@ await page.Locator(\"#age\").SelectOptionAsync(new[] { \"2\" });`);
     expect(message.text()).toBe('2');
   });
 
-  test('should await popup', async ({ openRecorder }) => {
+  test('should await popup', async ({ openRecorder, server }) => {
+    test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36461' });
+
     const { page, recorder } = await openRecorder();
-    await recorder.setContentAndWait('<a target=_blank rel=noopener href="about:blank">link</a>');
+    server.setRoute('/popup', (req, res) => {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(`<button>Click me</button>`);
+    });
+    await recorder.setContentAndWait(`<a target=_blank rel=noopener href="${server.PREFIX}/popup">link</a>`);
 
     const locator = await recorder.hoverOverElement('a');
     expect(locator).toBe(`getByRole('link', { name: 'link' })`);
 
-    const [popup, sources] = await Promise.all([
+    const [popup] = await Promise.all([
       page.context().waitForEvent('page'),
-      recorder.waitForOutput('JavaScript', 'waitForEvent'),
       recorder.trustedClick(),
     ]);
+
+    recorder.page = popup;
+    await recorder.hoverOverElement('button');
+    await recorder.trustedClick();
+
+    const sources = await recorder.waitForOutput('JavaScript', 'page1.');
 
     expect.soft(sources.get('JavaScript')!.text).toContain(`
   const page1Promise = page.waitForEvent('popup');
   await page.getByRole('link', { name: 'link' }).click();
-  const page1 = await page1Promise;`);
+  const page1 = await page1Promise;
+  await page1.getByRole('button', { name: 'Click me' }).click();`);
 
     expect.soft(sources.get('Java')!.text).toContain(`
       Page page1 = page.waitForPopup(() -> {
@@ -701,9 +805,15 @@ await page.Locator(\"#age\").SelectOptionAsync(new[] { \"2\" });`);
 var page1 = await page.RunAndWaitForPopupAsync(async () =>
 {
     await page.GetByRole(AriaRole.Link, new() { Name = "link" }).ClickAsync();
-});`);
+});
+await page1.GetByRole(AriaRole.Button, new() { Name = \"Click me\" }).ClickAsync();`);
 
-    expect(popup.url()).toBe('about:blank');
+    expect.soft(sources.get('C# NUnit')!.text).toContain(`
+        var page1 = await Page.RunAndWaitForPopupAsync(async () =>
+        {
+            await Page.GetByRole(AriaRole.Link, new() { Name = "link" }).ClickAsync();
+        });
+        await page1.GetByRole(AriaRole.Button, new() { Name = \"Click me\" }).ClickAsync();`);
   });
 
   test('should attribute navigation to click', async ({ openRecorder }) => {
@@ -757,6 +867,70 @@ var page1 = await page.RunAndWaitForPopupAsync(async () =>
     expect.soft(sources.get('C#')!.text).toContain(`
 await page.GotoAsync("about:blank");
 await page.GetByText("link").ClickAsync();`);
+
+    expect(page.url()).toContain('about:blank#foo');
+  });
+
+  test('should attribute navigation to press/fill', async ({ openRecorder }) => {
+    const { page, recorder } = await openRecorder();
+
+    await recorder.setContentAndWait(`<input /><script>document.querySelector('input').addEventListener('input', () => window.location.href = 'about:blank#foo');</script>`);
+
+    const locator = await recorder.hoverOverElement('input');
+    expect(locator).toBe(`getByRole('textbox')`);
+    await recorder.trustedClick();
+    await expect.poll(() => page.locator('input').evaluate(e => e === document.activeElement)).toBeTruthy();
+    const [, sources] = await Promise.all([
+      page.waitForNavigation(),
+      recorder.waitForOutput('JavaScript', '.fill'),
+      recorder.trustedPress('h'),
+    ]);
+
+    expect.soft(sources.get('JavaScript')!.text).toContain(`
+  await page.goto('about:blank');
+  await page.getByRole('textbox').click();
+  await page.getByRole('textbox').fill('h');
+
+  // ---------------------
+  await context.close();`);
+
+    expect.soft(sources.get('Playwright Test')!.text).toContain(`
+  await page.goto('about:blank');
+  await page.getByRole('textbox').click();
+  await page.getByRole('textbox').fill('h');
+});`);
+
+    expect.soft(sources.get('Java')!.text).toContain(`
+      page.navigate(\"about:blank\");
+      page.getByRole(AriaRole.TEXTBOX).click();
+      page.getByRole(AriaRole.TEXTBOX).fill(\"h\");
+    }`);
+
+    expect.soft(sources.get('Python')!.text).toContain(`
+    page.goto("about:blank")
+    page.get_by_role("textbox").click()
+    page.get_by_role("textbox").fill("h")
+
+    # ---------------------
+    context.close()`);
+
+    expect.soft(sources.get('Python Async')!.text).toContain(`
+    await page.goto("about:blank")
+    await page.get_by_role("textbox").click()
+    await page.get_by_role("textbox").fill("h")
+
+    # ---------------------
+    await context.close()`);
+
+    expect.soft(sources.get('Pytest')!.text).toContain(`
+    page.goto("about:blank")
+    page.get_by_role("textbox").click()
+    page.get_by_role("textbox").fill("h")`);
+
+    expect.soft(sources.get('C#')!.text).toContain(`
+await page.GotoAsync("about:blank");
+await page.GetByRole(AriaRole.Textbox).ClickAsync();
+await page.GetByRole(AriaRole.Textbox).FillAsync("h");`);
 
     expect(page.url()).toContain('about:blank#foo');
   });
@@ -907,5 +1081,35 @@ await page.GetByRole(AriaRole.Button, new() { Name = "Submit" }).ClickAsync();`)
     await page.goto(server.PREFIX + '/csp.html');
     const predicate = (msg: ConsoleMessage) => msg.type() === 'error' && /Content[\- ]Security[\- ]Policy/i.test(msg.text());
     await expect(page.waitForEvent('console', { predicate, timeout: 1000 })).rejects.toThrow();
+  });
+
+  test('should clear when recording is disabled', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/33802' } }, async ({ openRecorder }) => {
+    const { recorder } = await openRecorder();
+
+    await recorder.setContentAndWait(`
+      <button id="foo" onclick="console.log('click')">Foo</button>
+      <button id="bar" onclick="console.log('click')">Bar</button>
+    `);
+
+    await recorder.hoverOverElement('#foo');
+    let [sources] = await Promise.all([
+      recorder.waitForOutput('JavaScript', 'click'),
+      recorder.trustedClick(),
+    ]);
+
+    expect(sources.get('JavaScript').text).toContain(`getByRole('button', { name: 'Foo' }).click()`);
+
+    await recorder.recorderPage.getByRole('button', { name: 'Record' }).click();
+    await recorder.recorderPage.getByRole('button', { name: 'Clear' }).click();
+    await recorder.recorderPage.getByRole('button', { name: 'Record' }).click();
+
+    await recorder.hoverOverElement('#bar');
+    [sources] = await Promise.all([
+      recorder.waitForOutput('JavaScript', 'click'),
+      recorder.trustedClick(),
+    ]);
+
+    expect(sources.get('JavaScript').text).toContain(`getByRole('button', { name: 'Bar' }).click()`);
+    expect(sources.get('JavaScript').text).not.toContain(`getByRole('button', { name: 'Foo' })`);
   });
 });

@@ -14,11 +14,13 @@
  * limitations under the License.
  */
 
-import type { BrowserContextOptions } from '../../../types/types';
-import type { ActionInContext, Language, LanguageGenerator, LanguageGeneratorOptions } from './types';
-import { sanitizeDeviceOptions, toSignalMap, toKeyboardModifiers, toClickOptionsForSourceCode } from './language';
+import { sanitizeDeviceOptions, toClickOptionsForSourceCode, toKeyboardModifiers, toSignalMap } from './language';
+import { asLocator, escapeWithQuotes } from '../../utils';
 import { deviceDescriptors } from '../deviceDescriptors';
-import { escapeWithQuotes, asLocator } from '../../utils';
+
+import type { Language, LanguageGenerator, LanguageGeneratorOptions } from './types';
+import type { BrowserContextOptions } from '../../../types/types';
+import type * as actions from '@recorder/actions';
 
 export class JavaScriptLanguageGenerator implements LanguageGenerator {
   id: string;
@@ -33,7 +35,7 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
     this._isTest = isTest;
   }
 
-  generateAction(actionInContext: ActionInContext): string {
+  generateAction(actionInContext: actions.ActionInContext): string {
     const action = actionInContext.action;
     if (this._isTest && (action.name === 'openPage' || action.name === 'closePage'))
       return '';
@@ -74,7 +76,7 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
     return formatter.format();
   }
 
-  private _generateActionCall(subject: string, actionInContext: ActionInContext): string {
+  private _generateActionCall(subject: string, actionInContext: actions.ActionInContext): string {
     const action = actionInContext.action;
     switch (action.name) {
       case 'openPage':
@@ -105,7 +107,7 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
       case 'navigate':
         return `await ${subject}.goto(${quote(action.url)});`;
       case 'select':
-        return `await ${subject}.${this._asLocator(action.selector)}.selectOption(${formatObject(action.options.length > 1 ? action.options : action.options[0])});`;
+        return `await ${subject}.${this._asLocator(action.selector)}.selectOption(${formatObject(action.options.length === 1 ? action.options[0] : action.options)});`;
       case 'assertText':
         return `${this._isTest ? '' : '// '}await expect(${subject}.${this._asLocator(action.selector)}).${action.substring ? 'toContainText' : 'toHaveText'}(${quote(action.text)});`;
       case 'assertChecked':
@@ -115,6 +117,10 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
       case 'assertValue': {
         const assertion = action.value ? `toHaveValue(${quote(action.value)})` : `toBeEmpty()`;
         return `${this._isTest ? '' : '// '}await expect(${subject}.${this._asLocator(action.selector)}).${assertion};`;
+      }
+      case 'assertSnapshot': {
+        const commentIfNeeded = this._isTest ? '' : '// ';
+        return `${commentIfNeeded}await expect(${subject}.${this._asLocator(action.selector)}).toMatchAriaSnapshot(${quoteMultiline(action.ariaSnapshot, `${commentIfNeeded}  `)});`;
       }
     }
   }
@@ -137,11 +143,15 @@ export class JavaScriptLanguageGenerator implements LanguageGenerator {
 
   generateTestHeader(options: LanguageGeneratorOptions): string {
     const formatter = new JavaScriptFormatter();
-    const useText = formatContextOptions(options.contextOptions, options.deviceName);
+    const useText = formatContextOptions(options.contextOptions, options.deviceName, this._isTest);
     formatter.add(`
       import { test, expect${options.deviceName ? ', devices' : ''} } from '@playwright/test';
 ${useText ? '\ntest.use(' + useText + ');\n' : ''}
       test('test', async ({ page }) => {`);
+    if (options.contextOptions.recordHar) {
+      const url = options.contextOptions.recordHar.urlFilter;
+      formatter.add(`  await page.routeFromHAR(${quote(options.contextOptions.recordHar.path)}${url ? `, ${formatOptions({ url }, false)}` : ''});`);
+    }
     return formatter.format();
   }
 
@@ -156,7 +166,9 @@ ${useText ? '\ntest.use(' + useText + ');\n' : ''}
 
       (async () => {
         const browser = await ${options.browserName}.launch(${formatObjectOrVoid(options.launchOptions)});
-        const context = await browser.newContext(${formatContextOptions(options.contextOptions, options.deviceName)});`);
+        const context = await browser.newContext(${formatContextOptions(options.contextOptions, options.deviceName, false)});`);
+    if (options.contextOptions.recordHar)
+      formatter.add(`        await context.routeFromHAR(${quote(options.contextOptions.recordHar.path)});`);
     return formatter.format();
   }
 
@@ -198,8 +210,10 @@ function formatObjectOrVoid(value: any, indent = '  '): string {
   return result === '{}' ? '' : result;
 }
 
-function formatContextOptions(options: BrowserContextOptions, deviceName: string | undefined): string {
+function formatContextOptions(options: BrowserContextOptions, deviceName: string | undefined, isTest: boolean): string {
   const device = deviceName && deviceDescriptors[deviceName];
+  // recordHAR is replaced with routeFromHAR in the generated code.
+  options = { ...options, recordHar: undefined };
   if (!device)
     return formatObjectOrVoid(options);
   // Filter out all the properties from the device descriptor.
@@ -223,11 +237,13 @@ export class JavaScriptFormatter {
   }
 
   prepend(text: string) {
-    this._lines = text.trim().split('\n').map(line => line.trim()).concat(this._lines);
+    const trim = isMultilineString(text) ? (line: string) => line : (line: string) => line.trim();
+    this._lines = text.trim().split('\n').map(trim).concat(this._lines);
   }
 
   add(text: string) {
-    this._lines.push(...text.trim().split('\n').map(line => line.trim()));
+    const trim = isMultilineString(text) ? (line: string) => line : (line: string) => line.trim();
+    this._lines.push(...text.trim().split('\n').map(trim));
   }
 
   newLine() {
@@ -263,4 +279,18 @@ function wrapWithStep(description: string | undefined, body: string) {
   return description ? `await test.step(\`${description}\`, async () => {
 ${body}
 });` : body;
+}
+
+export function quoteMultiline(text: string, indent = '  ') {
+  const escape = (text: string) => text.replace(/\\/g, '\\\\')
+      .replace(/`/g, '\\`')
+      .replace(/\$\{/g, '\\${');
+  const lines = text.split('\n');
+  if (lines.length === 1)
+    return '`' + escape(text) + '`';
+  return '`\n' + lines.map(line => indent + escape(line).replace(/\${/g, '\\${')).join('\n') + `\n${indent}\``;
+}
+
+function isMultilineString(text: string) {
+  return text.match(/`[\S\s]*`/)?.[0].includes('\n');
 }

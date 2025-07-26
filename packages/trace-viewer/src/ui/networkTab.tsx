@@ -16,7 +16,7 @@
 
 import type { Entry } from '@trace/har';
 import * as React from 'react';
-import type { Boundaries } from '../geometry';
+import type { Boundaries } from './geometry';
 import './networkTab.css';
 import { NetworkResourceDetails } from './networkResourceDetails';
 import { bytesToString, msToString } from '@web/uiUtils';
@@ -24,8 +24,9 @@ import { PlaceholderPanel } from './placeholderPanel';
 import { context, type MultiTraceModel } from './modelUtil';
 import { GridView, type RenderedGridCell } from '@web/components/gridView';
 import { SplitView } from '@web/components/splitView';
-import type { ContextEntry } from '../entries';
+import type { ContextEntry } from '../types/entries';
 import { NetworkFilters, defaultFilterState, type FilterState, type ResourceType } from './networkFilters';
+import type { Language } from '@isomorphic/locatorGenerators';
 
 type NetworkTabModel = {
   resources: Entry[],
@@ -65,8 +66,9 @@ export function useNetworkTabModel(model: MultiTraceModel | undefined, selectedT
 export const NetworkTab: React.FunctionComponent<{
   boundaries: Boundaries,
   networkModel: NetworkTabModel,
-  onEntryHovered: (entry: Entry | undefined) => void,
-}> = ({ boundaries, networkModel, onEntryHovered }) => {
+  onEntryHovered?: (entry: Entry | undefined) => void,
+  sdkLanguage: Language,
+}> = ({ boundaries, networkModel, onEntryHovered, sdkLanguage }) => {
   const [sorting, setSorting] = React.useState<Sorting | undefined>(undefined);
   const [selectedEntry, setSelectedEntry] = React.useState<RenderedEntry | undefined>(undefined);
   const [filterState, setFilterState] = React.useState(defaultFilterState);
@@ -92,10 +94,11 @@ export const NetworkTab: React.FunctionComponent<{
 
   const grid = <NetworkGridView
     name='network'
+    ariaLabel='Network requests'
     items={renderedEntries}
     selectedItem={selectedEntry}
     onSelected={item => setSelectedEntry(item)}
-    onHighlighted={item => onEntryHovered(item?.resource)}
+    onHighlighted={item => onEntryHovered?.(item?.resource)}
     columns={visibleColumns(!!selectedEntry, renderedEntries)}
     columnTitle={columnTitle}
     columnWidths={columnWidths}
@@ -115,7 +118,7 @@ export const NetworkTab: React.FunctionComponent<{
         sidebarIsFirst={true}
         orientation='horizontal'
         settingName='networkResourceDetails'
-        main={<NetworkResourceDetails resource={selectedEntry.resource} onClose={() => setSelectedEntry(undefined)} />}
+        main={<NetworkResourceDetails resource={selectedEntry.resource} sdkLanguage={sdkLanguage} startTimeOffset={selectedEntry.start} onClose={() => setSelectedEntry(undefined)} />}
         sidebar={grid}
       />}
   </>;
@@ -266,6 +269,8 @@ const renderEntry = (resource: Entry, boundaries: Boundaries, contextIdGenerator
     resourceName = url.pathname.substring(url.pathname.lastIndexOf('/') + 1);
     if (!resourceName)
       resourceName = url.host;
+    if (url.search)
+      resourceName += url.search;
   } catch {
     resourceName = resource.request.url;
   }

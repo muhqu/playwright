@@ -34,6 +34,10 @@ The recommended approach is to use `setFixedTime` to set the time to a specific 
   - `Event.timeStamp`
 :::
 
+:::warning
+If you call `install` at any point in your test, the call _MUST_ occur before any other clock related calls (see note above for list). Calling these methods out of order will result in undefined behavior. For example, you cannot call `setInterval`, followed by `install`, then `clearInterval`, as `install` overrides the native definition of the clock functions.
+:::
+
 ## Test with predefined time
 
 Often you only need to fake `Date.now` while keeping the timers going.
@@ -58,6 +62,47 @@ await expect(page.getByTestId('current-time')).toHaveText('2/2/2024, 10:00:00 AM
 await page.clock.setFixedTime(new Date('2024-02-02T10:30:00'));
 // We know that the page has a timer that updates the time every second.
 await expect(page.getByTestId('current-time')).toHaveText('2/2/2024, 10:30:00 AM');
+```
+
+```python async
+await page.clock.set_fixed_time(datetime.datetime(2024, 2, 2, 10, 0, 0))
+await page.goto("http://localhost:3333")
+await expect(page.get_by_test_id("current-time")).to_have_text("2/2/2024, 10:00:00 AM")
+
+await page.clock.set_fixed_time(datetime.datetime(2024, 2, 2, 10, 30, 0))
+# We know that the page has a timer that updates the time every second.
+await expect(page.get_by_test_id("current-time")).to_have_text("2/2/2024, 10:30:00 AM")
+```
+
+```python sync
+page.clock.set_fixed_time(datetime.datetime(2024, 2, 2, 10, 0, 0))
+page.goto("http://localhost:3333")
+expect(page.get_by_test_id("current-time")).to_have_text("2/2/2024, 10:00:00 AM")
+page.clock.set_fixed_time(datetime.datetime(2024, 2, 2, 10, 30, 0))
+# We know that the page has a timer that updates the time every second.
+expect(page.get_by_test_id("current-time")).to_have_text("2/2/2024, 10:30:00 AM")
+```
+
+```java
+SimpleDateFormat format = new SimpleDateFormat("yyy-MM-dd'T'HH:mm:ss");
+page.clock().setFixedTime(format.parse("2024-02-02T10:00:00"));
+page.navigate("http://localhost:3333");
+Locator locator = page.getByTestId("current-time");
+assertThat(locator).hasText("2/2/2024, 10:00:00 AM");
+page.clock().setFixedTime(format.parse("2024-02-02T10:30:00"));
+// We know that the page has a timer that updates the time every second.
+assertThat(locator).hasText("2/2/2024, 10:30:00 AM");
+```
+
+```csharp
+// Set the fixed time for the clock.
+await Page.Clock.SetFixedTimeAsync(new DateTime(2024, 2, 2, 10, 0, 0));
+await Page.GotoAsync("http://localhost:3333");
+await Expect(Page.GetByTestId("current-time")).ToHaveTextAsync("2/2/2024, 10:00:00 AM");
+// Set the fixed time for the clock.
+await Page.Clock.SetFixedTimeAsync(new DateTime(2024, 2, 2, 10, 30, 0));
+// We know that the page has a timer that updates the time every second.
+await Expect(Page.GetByTestId("current-time")).ToHaveTextAsync("2/2/2024, 10:30:00 AM");
 ```
 
 ## Consistent time and timers
@@ -164,11 +209,11 @@ await Page.GotoAsync("http://localhost:3333");
 await Page.Clock.PauseAtAsync(new DateTime(2024, 2, 2, 10, 0, 0));
 
 // Assert the page state.
-await Expect(Page.GetByTestId("current-time")).ToHaveText("2/2/2024, 10:00:00 AM");
+await Expect(Page.GetByTestId("current-time")).ToHaveTextAsync("2/2/2024, 10:00:00 AM");
 
 // Close the laptop lid again and open it at 10:30am.
 await Page.Clock.FastForwardAsync("30:00");
-await Expect(Page.GetByTestId("current-time")).ToHaveText("2/2/2024, 10:30:00 AM");
+await Expect(Page.GetByTestId("current-time")).ToHaveTextAsync("2/2/2024, 10:30:00 AM");
 ```
 
 ## Test inactivity monitoring

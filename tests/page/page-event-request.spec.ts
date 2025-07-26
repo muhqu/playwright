@@ -41,6 +41,19 @@ it('should fire for fetches', async ({ page, server }) => {
   expect(requests.length).toBe(2);
 });
 
+it('should fire for fetches with keepalive: true', {
+  annotation: {
+    type: 'issue',
+    description: 'https://github.com/microsoft/playwright/issues/34497'
+  }
+}, async ({ page, server, browserName }) => {
+  const requests = [];
+  page.on('request', request => requests.push(request));
+  await page.goto(server.EMPTY_PAGE);
+  await page.evaluate(() => fetch('/empty.html', { keepalive: true }));
+  expect(requests.length).toBe(2);
+});
+
 it('should report requests and responses handled by service worker', async ({ page, server, isAndroid, isElectron }) => {
   it.fixme(isAndroid);
   it.fixme(isElectron);
@@ -240,4 +253,126 @@ it('main resource xhr should have type xhr', async ({ page, server }) => {
   ]);
   expect(request.isNavigationRequest()).toBe(false);
   expect(request.resourceType()).toBe('xhr');
+});
+
+it('should finish 204 request', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/32752' }
+}, async ({ page, server, browserName }) => {
+  it.fixme(browserName === 'chromium');
+  server.setRoute('/204', (req, res) => {
+    res.writeHead(204, { 'Content-type': 'text/plain' });
+    res.end();
+  });
+  await page.goto(server.EMPTY_PAGE);
+  const reqPromise = Promise.race([
+    page.waitForEvent('requestfailed', r => r.url().endsWith('/204')).then(() => 'requestfailed'),
+    page.waitForEvent('requestfinished', r => r.url().endsWith('/204')).then(() => 'requestfinished'),
+  ]);
+  page.evaluate(async url => { await fetch(url); }, server.PREFIX + '/204').catch(() => {});
+  expect(await reqPromise).toBe('requestfinished');
+});
+
+it('<picture> resource should have type image', async ({ page }) => {
+  it.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/33148' });
+  const [request] = await Promise.all([
+    page.waitForEvent('request'),
+    page.setContent(`
+      <picture>
+        <source>
+          <img src="https://www.wikipedia.org/portal/wikipedia.org/assets/img/Wikipedia-logo-v2@2x.png">
+        </source>
+      </picture>
+    `)
+  ]);
+  expect(request.resourceType()).toBe('image');
+});
+
+// Chromium: requestWillBeSentEvent.frameId is undefined for OPTIONS.
+// WebKit: no requestWillBeSent event in the protocol for OPTIONS (at least on Mac).
+// Firefox: OPTIONS request can be dispatched.
+it('should not expose preflight OPTIONS request', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36311' }
+}, async ({ page, server, browserName }) => {
+  const serverRequests = [];
+  server.setRoute('/cors', (req, res) => {
+    serverRequests.push(`${req.method} ${req.url}`);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+      });
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'Content-type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+    res.end('Hello there!');
+  });
+  const clientRequests = [];
+  page.on('request', request => {
+    clientRequests.push(`${request.method()} ${request.url()}`);
+  });
+  const response = await page.evaluate(async url => {
+    const response = await fetch(url, {
+      method: 'POST',
+      body: '',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Custom-Header': 'test-value'
+      }
+    });
+    return await response.text();
+  }, server.CROSS_PROCESS_PREFIX + '/cors').catch(() => {});
+  expect(response).toBe('Hello there!');
+  expect(serverRequests).toEqual([
+    'OPTIONS /cors',
+    'POST /cors',
+  ]);
+  expect(clientRequests).toEqual([
+    `POST ${server.CROSS_PROCESS_PREFIX}/cors`,
+  ]);
+});
+
+it('should not expose preflight OPTIONS request with network interception', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36311' }
+}, async ({ page, server, browserName }) => {
+  const serverRequests = [];
+  server.setRoute('/cors', (req, res) => {
+    serverRequests.push(`${req.method} ${req.url}`);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+      });
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'Content-type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+    res.end('Hello there!');
+  });
+  await page.route('**/*', route => route.continue());
+  const clientRequests = [];
+  page.on('request', request => {
+    clientRequests.push(`${request.method()} ${request.url()}`);
+  });
+  const response = await page.evaluate(async url => {
+    const response = await fetch(url, {
+      method: 'POST',
+      body: '',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Custom-Header': 'test-value'
+      }
+    });
+    return await response.text();
+  }, server.CROSS_PROCESS_PREFIX + '/cors').catch(() => {});
+  expect(response).toBe('Hello there!');
+  expect.soft(serverRequests).toEqual([
+    ...(browserName !== 'chromium' ? ['OPTIONS /cors'] : []),
+    'POST /cors',
+  ]);
+  expect.soft(clientRequests).toEqual([
+    `POST ${server.CROSS_PROCESS_PREFIX}/cors`,
+  ]);
 });

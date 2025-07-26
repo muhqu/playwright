@@ -136,9 +136,9 @@ it('should use viewport size from window features', async function({ browser, se
     page.evaluate(async () => {
       const win = window.open(window.location.href, 'Title', 'toolbar=no,location=no,directories=no,status=no,menubar=no,scrollbars=yes,resizable=yes,width=600,height=300,top=0,left=0');
       await new Promise<void>(resolve => {
-        const interval = window.builtinSetInterval(() => {
+        const interval = window.builtins.setInterval(() => {
           if (win.innerWidth === 600 && win.innerHeight === 300) {
-            window.builtinClearInterval(interval);
+            window.builtins.clearInterval(interval);
             resolve();
           }
         }, 10);
@@ -221,31 +221,25 @@ it('should expose function from browser context', async function({ browser, serv
 
 it('should not dispatch binding on a closed page', async function({ browser, server, browserName }) {
   const context = await browser.newContext();
-  const messages = [];
-  await context.exposeFunction('add', (a, b) => {
-    messages.push('binding');
+  let wasClosed: boolean | undefined;
+  await context.exposeBinding('add', (source, a, b) => {
+    wasClosed = source.page.isClosed();
     return a + b;
   });
   const page = await context.newPage();
   await page.goto(server.EMPTY_PAGE);
   await Promise.all([
-    page.waitForEvent('popup').then(popup => {
-      if (popup.isClosed())
-        messages.push('close');
-      else
-        return popup.waitForEvent('close').then(() => messages.push('close'));
-    }),
+    page.waitForEvent('popup'),
     page.evaluate(async () => {
       const win = window.open('about:blank');
       win['add'](9, 4);
       win.close();
     }),
   ]);
+  // Give it a chance to dispatch the binding on the closed page.
+  await page.waitForTimeout(1000);
   await context.close();
-  if (browserName === 'firefox')
-    expect(messages.join('|')).toBe('close');
-  else
-    expect(messages.join('|')).toBe('binding|close');
+  expect(wasClosed).not.toBeTruthy();
 });
 
 it('should not throttle rAF in the opener page', async ({ page, server }) => {
@@ -262,14 +256,17 @@ it('should not throttle rAF in the opener page', async ({ page, server }) => {
 });
 
 it('should not throw when click closes popup', async ({ browserName, page, server }) => {
-  it.fixme(browserName === 'firefox');
+  it.fixme(browserName === 'firefox', 'locator.click: Target page, context or browser has been closed');
+
   await page.goto(server.EMPTY_PAGE);
   const [popup] = await Promise.all([
     page.waitForEvent('popup'),
-    page.evaluate(() => {
+    page.evaluate(async browserName => {
       const w = window.open('about:blank');
+      if (browserName === 'firefox')
+        await new Promise(x => w.onload = x);
       w.document.body.innerHTML = `<button onclick="window.close()">close</button>`;
-    }),
+    }, browserName),
   ]);
   await popup.getByRole('button').click();
 });
@@ -281,8 +278,8 @@ async function waitForRafs(page: Page, count: number): Promise<void> {
       if (!count)
         resolve();
       else
-        window.builtinRequestAnimationFrame(onRaf);
+        window.builtins.requestAnimationFrame(onRaf);
     };
-    window.builtinRequestAnimationFrame(onRaf);
+    window.builtins.requestAnimationFrame(onRaf);
   }), count);
 }

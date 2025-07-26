@@ -15,28 +15,26 @@
  * limitations under the License.
  */
 
-import type { Size, Point, TimeoutOptions, HeadersArray } from '../common/types';
-export type { Size, Point, Rect, Quad, TimeoutOptions, HeadersArray } from '../common/types';
+import type { HeadersArray, Point, Size } from '../utils/isomorphic/types';
+export type { HeadersArray, Point, Quad, Rect, Size } from '../utils/isomorphic/types';
 import type * as channels from '@protocol/channels';
 
 export type StrictOptions = {
   strict?: boolean,
 };
 
-export type QueryOnSelectorOptions = StrictOptions & TimeoutOptions;
+export type QueryOnSelectorOptions = StrictOptions;
 
-export type WaitForElementOptions = TimeoutOptions & StrictOptions & { state?: 'attached' | 'detached' | 'visible' | 'hidden' } & { omitReturnValue?: boolean };
-
-export type WaitForFunctionOptions = TimeoutOptions & { pollingInterval?: number };
+export type WaitForElementOptions = StrictOptions & { state?: 'attached' | 'detached' | 'visible' | 'hidden' } & { omitReturnValue?: boolean };
 
 export type LifecycleEvent = 'load' | 'domcontentloaded' | 'networkidle' | 'commit';
 export const kLifecycleEvents: Set<LifecycleEvent> = new Set(['load', 'domcontentloaded', 'networkidle', 'commit']);
 
-export type NavigateOptions = TimeoutOptions & {
+export type NavigateOptions = {
   waitUntil?: LifecycleEvent,
 };
 
-export type CommonActionOptions = TimeoutOptions & StrictOptions & {
+export type CommonActionOptions = StrictOptions & {
   force?: boolean,
 };
 
@@ -83,6 +81,8 @@ export type ColorScheme = 'dark' | 'light' | 'no-preference' | 'no-override';
 export type ReducedMotion = 'no-preference' | 'reduce' | 'no-override';
 
 export type ForcedColors = 'active' | 'none' | 'no-override';
+
+export type Contrast = 'no-preference' | 'more' | 'no-override';
 
 export type DeviceDescriptor = {
   userAgent: string,
@@ -150,9 +150,11 @@ export type NormalizedContinueOverrides = {
 
 export type EmulatedSize = { viewport: Size, screen: Size };
 
-export type LaunchOptions = channels.BrowserTypeLaunchOptions & {
-  useWebSocket?: boolean,
+export type LaunchOptions = Omit<channels.BrowserTypeLaunchParams, 'timeout'> & {
+  cdpPort?: number,
   proxyOverride?: ProxySettings,
+  assistantMode?: boolean,
+  socksProxyPort?: number,
 };
 
 export type BrowserContextOptions = channels.BrowserNewContextOptions & {

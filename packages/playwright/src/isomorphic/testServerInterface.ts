@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-import type * as reporterTypes from '../../types/testReporter';
 import type { Event } from './events';
 import type { JsonEvent } from './teleReceiver';
+import type * as reporterTypes from '../../types/testReporter';
 
 // -- Reuse boundary -- Everything below this line is reused in the vscode extension.
 
@@ -45,7 +45,7 @@ export interface TestServerInterface {
 
   installBrowsers(params: {}): Promise<void>;
 
-  runGlobalSetup(params: { outputDir?: string }): Promise<{
+  runGlobalSetup(params: {}): Promise<{
     report: ReportEntry[],
     status: reporterTypes.FullResult['status']
   }>;
@@ -82,7 +82,6 @@ export interface TestServerInterface {
     locations?: string[];
     grep?: string;
     grepInvert?: string;
-    outputDir?: string;
   }): Promise<{
     report: ReportEntry[],
     status: reporterTypes.FullResult['status']
@@ -95,9 +94,8 @@ export interface TestServerInterface {
     testIds?: string[];
     headed?: boolean;
     workers?: number | string;
-    timeout?: number,
-    outputDir?: string;
-    updateSnapshots?: 'all' | 'none' | 'missing';
+    updateSnapshots?: 'all' | 'changed' | 'missing' | 'none';
+    updateSourceMethod?: 'overwrite' | 'patch' | '3way';
     reporters?: string[],
     trace?: 'on' | 'off';
     video?: 'on' | 'off';

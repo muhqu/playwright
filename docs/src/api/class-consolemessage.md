@@ -44,8 +44,8 @@ ConsoleMessage msg = page.waitForConsoleMessage(() -> {
 });
 
 // Deconstruct console.log arguments
-msg.args().get(0).jsonValue() // hello
-msg.args().get(1).jsonValue() // 42
+msg.args().get(0).jsonValue(); // hello
+msg.args().get(1).jsonValue(); // 42
 ```
 
 ```python async
@@ -139,6 +139,12 @@ The text of the console message.
 
 ## method: ConsoleMessage.type
 * since: v1.8
+* langs: js, python
+- returns: <[ConsoleMessageType]<"log"|"debug"|"info"|"error"|"warning"|"dir"|"dirxml"|"table"|"trace"|"clear"|"startGroup"|"startGroupCollapsed"|"endGroup"|"assert"|"profile"|"profileEnd"|"count"|"timeEnd">>
+
+## method: ConsoleMessage.type
+* since: v1.8
+* langs: csharp, java
 - returns: <[string]>
 
 One of the following values: `'log'`, `'debug'`, `'info'`, `'error'`, `'warning'`, `'dir'`, `'dirxml'`, `'table'`,

@@ -14,12 +14,15 @@
  * limitations under the License.
  */
 
-import type * as channels from '@protocol/channels';
 import { eventsHelper } from '../../utils';
-import type { RegisteredListener } from '../../utils/eventsHelper';
 import { DebugController } from '../debugController';
-import type { DispatcherConnection, RootDispatcher } from './dispatcher';
 import { Dispatcher } from './dispatcher';
+
+import type { DispatcherConnection, RootDispatcher } from './dispatcher';
+import type { RegisteredListener } from '../utils/eventsHelper';
+import type * as channels from '@protocol/channels';
+import type { Progress } from '@protocol/progress';
+
 
 export class DebugControllerDispatcher extends Dispatcher<DebugController, channels.DebugControllerChannel, RootDispatcher> implements channels.DebugControllerChannel {
   _type_DebugController;
@@ -32,8 +35,8 @@ export class DebugControllerDispatcher extends Dispatcher<DebugController, chann
       eventsHelper.addEventListener(this._object, DebugController.Events.StateChanged, params => {
         this._dispatchEvent('stateChanged', params);
       }),
-      eventsHelper.addEventListener(this._object, DebugController.Events.InspectRequested, ({ selector, locator }) => {
-        this._dispatchEvent('inspectRequested', { selector, locator });
+      eventsHelper.addEventListener(this._object, DebugController.Events.InspectRequested, ({ selector, locator, ariaSnapshot }) => {
+        this._dispatchEvent('inspectRequested', { selector, locator, ariaSnapshot });
       }),
       eventsHelper.addEventListener(this._object, DebugController.Events.SourceChanged, ({ text, header, footer, actions }) => {
         this._dispatchEvent('sourceChanged', ({ text, header, footer, actions }));
@@ -47,43 +50,43 @@ export class DebugControllerDispatcher extends Dispatcher<DebugController, chann
     ];
   }
 
-  async initialize(params: channels.DebugControllerInitializeParams) {
+  async initialize(params: channels.DebugControllerInitializeParams, progress: Progress) {
     this._object.initialize(params.codegenId, params.sdkLanguage);
   }
 
-  async setReportStateChanged(params: channels.DebugControllerSetReportStateChangedParams) {
+  async setReportStateChanged(params: channels.DebugControllerSetReportStateChangedParams, progress: Progress) {
     this._object.setReportStateChanged(params.enabled);
   }
 
-  async resetForReuse() {
-    await this._object.resetForReuse();
+  async resetForReuse(params: channels.DebugControllerResetForReuseParams, progress: Progress) {
+    await this._object.resetForReuse(progress);
   }
 
-  async navigate(params: channels.DebugControllerNavigateParams) {
-    await this._object.navigate(params.url);
+  async navigate(params: channels.DebugControllerNavigateParams, progress: Progress) {
+    await this._object.navigate(progress, params.url);
   }
 
-  async setRecorderMode(params: channels.DebugControllerSetRecorderModeParams) {
-    await this._object.setRecorderMode(params);
+  async setRecorderMode(params: channels.DebugControllerSetRecorderModeParams, progress: Progress) {
+    await this._object.setRecorderMode(progress, params);
   }
 
-  async highlight(params: channels.DebugControllerHighlightParams) {
-    await this._object.highlight(params.selector);
+  async highlight(params: channels.DebugControllerHighlightParams, progress: Progress) {
+    await this._object.highlight(progress, params);
   }
 
-  async hideHighlight() {
-    await this._object.hideHighlight();
+  async hideHighlight(params: channels.DebugControllerHideHighlightParams, progress: Progress) {
+    await this._object.hideHighlight(progress);
   }
 
-  async resume() {
-    await this._object.resume();
+  async resume(params: channels.DebugControllerResumeParams, progress: Progress) {
+    await this._object.resume(progress);
   }
 
-  async kill() {
-    await this._object.kill();
+  async kill(params: channels.DebugControllerKillParams, progress: Progress) {
+    this._object.kill();
   }
 
-  async closeAllBrowsers() {
+  async closeAllBrowsers(params: channels.DebugControllerCloseAllBrowsersParams, progress: Progress) {
     await this._object.closeAllBrowsers();
   }
 

@@ -16,8 +16,9 @@
 
 import fs from 'fs';
 import path from 'path';
-import { httpRequest } from '../../utils/network';
-import { ManualPromise } from '../../utils/manualPromise';
+
+import { ManualPromise } from '../../utils/isomorphic/manualPromise';
+import { httpRequest } from '../utils/network';
 import { extract } from '../../zipBundle';
 
 export type DownloadParams = {
@@ -26,7 +27,7 @@ export type DownloadParams = {
   url: string;
   zipPath: string;
   executablePath: string | undefined;
-  connectionTimeout: number;
+  socketTimeout: number;
   userAgent: string;
 };
 
@@ -47,13 +48,12 @@ function downloadFile(options: DownloadParams): Promise<void> {
   let totalBytes = 0;
 
   const promise = new ManualPromise<void>();
-
   httpRequest({
     url: options.url,
     headers: {
       'User-Agent': options.userAgent,
     },
-    timeout: options.connectionTimeout,
+    socketTimeout: options.socketTimeout,
   }, response => {
     log(`-- response status code: ${response.statusCode}`);
     if (response.statusCode !== 200) {

@@ -85,7 +85,7 @@ jobs:
     - uses: actions/checkout@v4
     - uses: actions/setup-node@v4
       with:
-        node-version: 18
+        node-version: lts/*
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
@@ -208,13 +208,13 @@ jobs:
     name: 'Playwright Tests'
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright:v%%VERSION%%-jammy
+      image: mcr.microsoft.com/playwright:v%%VERSION%%-noble
       options: --user 1001
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: lts/*
       - name: Install dependencies
         run: npm ci
       - name: Run your tests
@@ -233,7 +233,7 @@ jobs:
     name: 'Playwright Tests'
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright/python:v%%VERSION%%-jammy
+      image: mcr.microsoft.com/playwright/python:v%%VERSION%%-noble
       options: --user 1001
     steps:
       - uses: actions/checkout@v4
@@ -262,7 +262,7 @@ jobs:
     name: 'Playwright Tests'
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright/java:v%%VERSION%%-jammy
+      image: mcr.microsoft.com/playwright/java:v%%VERSION%%-noble
       options: --user 1001
     steps:
       - uses: actions/checkout@v4
@@ -288,7 +288,7 @@ jobs:
     name: 'Playwright Tests'
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright/dotnet:v%%VERSION%%-jammy
+      image: mcr.microsoft.com/playwright/dotnet:v%%VERSION%%-noble
       options: --user 1001
     steps:
       - uses: actions/checkout@v4
@@ -319,7 +319,7 @@ jobs:
     - uses: actions/checkout@v4
     - uses: actions/setup-node@v4
       with:
-        node-version: 18
+        node-version: lts/*
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright
@@ -415,7 +415,7 @@ Large test suites can take very long to execute. By executing a preliminary test
 This will give you a faster feedback loop and slightly lower CI consumption while working on Pull Requests.
 To detect test files affected by your changeset, `--only-changed` analyses your suites' dependency graph. This is a heuristic and might miss tests, so it's important that you always run the full test suite after the preliminary test run.
 
-```yml js title=".github/workflows/playwright.yml" {20-23}
+```yml js title=".github/workflows/playwright.yml" {24-26}
 name: Playwright Tests
 on:
   push:
@@ -434,7 +434,7 @@ jobs:
         fetch-depth: 0
     - uses: actions/setup-node@v4
       with:
-        node-version: 18
+        node-version: lts/*
     - name: Install dependencies
       run: npm ci
     - name: Install Playwright Browsers
@@ -454,19 +454,11 @@ jobs:
 
 ### Docker
 
-We have a [pre-built Docker image](./docker.md) which can either be used directly, or as a reference to update your existing Docker definitions.
-
-Suggested configuration
-1. Using `--ipc=host` is also recommended when using Chromium. Without it Chromium can run out of memory
-   and crash. Learn more about this option in [Docker docs](https://docs.docker.com/engine/reference/run/#ipc-settings---ipc).
-1. Seeing other weird errors when launching Chromium? Try running your container
-   with `docker run --cap-add=SYS_ADMIN` when developing locally.
-1. Using `--init` Docker flag or [dumb-init](https://github.com/Yelp/dumb-init) is recommended to avoid special
-   treatment for processes with PID=1. This is a common reason for zombie processes.
+We have a [pre-built Docker image](./docker.md) which can either be used directly or as a reference to update your existing Docker definitions. Make sure to follow the [Recommended Docker Configuration](./docker.md#recommended-docker-configuration) to ensure the best performance.
 
 ### Azure Pipelines
 
-For Windows or macOS agents, no additional configuration required, just install Playwright and run your tests.
+For Windows or macOS agents, no additional configuration is required, just install Playwright and run your tests.
 
 For Linux agents, you can use [our Docker container](./docker.md) with Azure
 Pipelines support [running containerized
@@ -766,28 +758,28 @@ Running Playwright on CircleCI is very similar to running on GitHub Actions. In 
 
 ```yml js
 executors:
-  pw-jammy-development:
+  pw-noble-development:
     docker:
       - image: mcr.microsoft.com/playwright:v%%VERSION%%-noble
 ```
 
 ```yml python
 executors:
-  pw-jammy-development:
+  pw-noble-development:
     docker:
       - image: mcr.microsoft.com/playwright/python:v%%VERSION%%-noble
 ```
 
 ```yml java
 executors:
-  pw-jammy-development:
+  pw-noble-development:
     docker:
       - image: mcr.microsoft.com/playwright/java:v%%VERSION%%-noble
 ```
 
 ```yml csharp
 executors:
-  pw-jammy-development:
+  pw-noble-development:
     docker:
       - image: mcr.microsoft.com/playwright/dotnet:v%%VERSION%%-noble
 ```
@@ -801,10 +793,10 @@ Sharding in CircleCI is indexed with 0 which means that you will need to overrid
 
   ```yml
     playwright-job-name:
-      executor: pw-jammy-development
+      executor: pw-noble-development
       parallelism: 4
       steps:
-        - run: SHARD="$((${CIRCLE_NODE_INDEX}+1))"; npx playwright test -- --shard=${SHARD}/${CIRCLE_NODE_TOTAL}
+        - run: SHARD="$((${CIRCLE_NODE_INDEX}+1))"; npx playwright test --shard=${SHARD}/${CIRCLE_NODE_TOTAL}
   ```
 
 ### Jenkins
@@ -997,7 +989,7 @@ type: docker
 
 steps:
   - name: test
-    image: mcr.microsoft.com/playwright:v%%VERSION%%-jammy
+    image: mcr.microsoft.com/playwright:v%%VERSION%%-noble
     commands:
       - npx playwright test
 ```

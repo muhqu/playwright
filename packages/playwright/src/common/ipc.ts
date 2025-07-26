@@ -15,12 +15,16 @@
  */
 
 import util from 'util';
-import { type SerializedCompilationCache, serializeCompilationCache } from '../transform/compilationCache';
+
+import { serializeCompilationCache } from '../transform/compilationCache';
+
 import type { ConfigLocation, FullConfigInternal } from './config';
 import type { PlaywrightTestConfig, ReporterDescription, TestInfoError, TestStatus } from '../../types/test';
+import type { SerializedCompilationCache  } from '../transform/compilationCache';
 
 export type ConfigCLIOverrides = {
   debug?: boolean;
+  failOnFlakyTests?: boolean;
   forbidOnly?: boolean;
   fullyParallel?: boolean;
   globalTimeout?: number;
@@ -38,7 +42,8 @@ export type ConfigCLIOverrides = {
   timeout?: number;
   tsconfig?: string;
   ignoreSnapshots?: boolean;
-  updateSnapshots?: 'all'|'none'|'missing';
+  updateSnapshots?: 'all' | 'changed' | 'missing' | 'none';
+  updateSourceMethod?: 'overwrite' | 'patch' | '3way';
   workers?: number | string;
   projects?: { name: string, use?: any }[],
   use?: any;
@@ -48,9 +53,11 @@ export type SerializedConfig = {
   location: ConfigLocation;
   configCLIOverrides: ConfigCLIOverrides;
   compilationCache?: SerializedCompilationCache;
+  metadata?: string;
 };
 
 export type ProcessInitParams = {
+  timeOrigin: number;
   processName: string;
 };
 
@@ -74,13 +81,16 @@ export type AttachmentPayload = {
   path?: string;
   body?: string;
   contentType: string;
+  stepId?: string;
 };
+
+export type TestInfoErrorImpl = TestInfoError;
 
 export type TestEndPayload = {
   testId: string;
   duration: number;
   status: TestStatus;
-  errors: TestInfoError[];
+  errors: TestInfoErrorImpl[];
   hasNonRetriableError: boolean;
   expectedStatus: TestStatus;
   annotations: { type: string, description?: string }[];
@@ -101,7 +111,9 @@ export type StepEndPayload = {
   testId: string;
   stepId: string;
   wallTime: number;  // milliseconds since unix epoch
-  error?: TestInfoError;
+  error?: TestInfoErrorImpl;
+  suggestedRebaseline?: string;
+  annotations: { type: string, description?: string }[];
 };
 
 export type TestEntry = {
@@ -115,7 +127,7 @@ export type RunPayload = {
 };
 
 export type DonePayload = {
-  fatalErrors: TestInfoError[];
+  fatalErrors: TestInfoErrorImpl[];
   skipTestsDueToSetupFailure: string[];  // test ids
   fatalUnknownTestIds?: string[];
 };
@@ -126,7 +138,7 @@ export type TestOutputPayload = {
 };
 
 export type TeardownErrorsPayload = {
-  fatalErrors: TestInfoError[];
+  fatalErrors: TestInfoErrorImpl[];
 };
 
 export type EnvProducedPayload = [string, string | null][];
@@ -137,6 +149,11 @@ export function serializeConfig(config: FullConfigInternal, passCompilationCache
     configCLIOverrides: config.configCLIOverrides,
     compilationCache: passCompilationCache ? serializeCompilationCache() : undefined,
   };
+
+  try {
+    result.metadata = JSON.stringify(config.config.metadata);
+  } catch (error) {}
+
   return result;
 }
 

@@ -14,24 +14,25 @@
   limitations under the License.
 */
 
-import type { HTMLReport, TestCaseSummary, TestFileSummary } from './types';
+import type { TestCaseSummary, TestFileSummary } from './types';
 import * as React from 'react';
 import { hashStringToInt, msToString } from './utils';
 import { Chip } from './chip';
-import { filterWithToken, type Filter } from './filter';
-import { generateTraceUrl, Link, navigate, ProjectLink } from './links';
+import { filterWithQuery } from './filter';
+import { Link, LinkBadge, navigate, ProjectLink, SearchParamsContext, testResultHref, TraceLink } from './links';
 import { statusIcon } from './statusIcon';
 import './testFileView.css';
-import { video, image, trace } from './icons';
+import { video, image } from './icons';
 import { clsx } from '@web/uiUtils';
 
 export const TestFileView: React.FC<React.PropsWithChildren<{
-  report: HTMLReport;
   file: TestFileSummary;
+  projectNames: string[];
   isFileExpanded: (fileId: string) => boolean;
   setFileExpanded: (fileId: string, expanded: boolean) => void;
-  filter: Filter;
-}>> = ({ file, report, isFileExpanded, setFileExpanded, filter }) => {
+}>> = ({ file, projectNames, isFileExpanded, setFileExpanded }) => {
+  const searchParams = React.useContext(SearchParamsContext);
+  const filterParam = searchParams.has('q') ? '&q=' + searchParams.get('q') : '';
   return <Chip
     expanded={isFileExpanded(file.fileId)}
     noInsets={true}
@@ -39,7 +40,7 @@ export const TestFileView: React.FC<React.PropsWithChildren<{
     header={<span>
       {file.fileName}
     </span>}>
-    {file.tests.filter(t => filter.matches(t)).map(test =>
+    {file.tests.map(test =>
       <div key={`test-${test.testId}`} className={clsx('test-file-test', 'test-file-test-outcome-' + test.outcome)}>
         <div className='hbox' style={{ alignItems: 'flex-start' }}>
           <div className='hbox'>
@@ -47,23 +48,23 @@ export const TestFileView: React.FC<React.PropsWithChildren<{
               {statusIcon(test.outcome)}
             </span>
             <span>
-              <Link href={`#?testId=${test.testId}`} title={[...test.path, test.title].join(' › ')}>
+              <Link href={testResultHref({ test }) + filterParam} title={[...test.path, test.title].join(' › ')}>
                 <span className='test-file-title'>{[...test.path, test.title].join(' › ')}</span>
               </Link>
-              {report.projectNames.length > 1 && !!test.projectName &&
-              <ProjectLink projectNames={report.projectNames} projectName={test.projectName} />}
+              {projectNames.length > 1 && !!test.projectName &&
+              <ProjectLink projectNames={projectNames} projectName={test.projectName} />}
               <LabelsClickView labels={test.tags} />
             </span>
           </div>
           <span data-testid='test-duration' style={{ minWidth: '50px', textAlign: 'right' }}>{msToString(test.duration)}</span>
         </div>
         <div className='test-file-details-row'>
-          <Link href={`#?testId=${test.testId}`} title={[...test.path, test.title].join(' › ')} className='test-file-path-link'>
+          <Link href={testResultHref({ test })} title={[...test.path, test.title].join(' › ')} className='test-file-path-link'>
             <span className='test-file-path'>{test.location.file}:{test.location.line}</span>
           </Link>
           {imageDiffBadge(test)}
           {videoBadge(test)}
-          {traceBadge(test)}
+          <TraceLink test={test} dim={true} />
         </div>
       </div>
     )}
@@ -71,32 +72,28 @@ export const TestFileView: React.FC<React.PropsWithChildren<{
 };
 
 function imageDiffBadge(test: TestCaseSummary): JSX.Element | undefined {
-  const resultWithImageDiff = test.results.find(result => result.attachments.some(attachment => {
-    return attachment.contentType.startsWith('image/') && !!attachment.name.match(/-(expected|actual|diff)/);
-  }));
-  return resultWithImageDiff ? <Link href={`#?testId=${test.testId}&anchor=diff&run=${test.results.indexOf(resultWithImageDiff)}`} title='View images' className='test-file-badge'>{image()}</Link> : undefined;
+  for (const result of test.results) {
+    for (const attachment of result.attachments) {
+      if (attachment.contentType.startsWith('image/') && !!attachment.name.match(/-(expected|actual|diff)/))
+        return <LinkBadge href={testResultHref({ test, result, anchor: `attachment-${result.attachments.indexOf(attachment)}` })} title='View images' dim={true}>{image()}</LinkBadge>;
+    }
+  }
 }
 
 function videoBadge(test: TestCaseSummary): JSX.Element | undefined {
   const resultWithVideo = test.results.find(result => result.attachments.some(attachment => attachment.name === 'video'));
-  return resultWithVideo ? <Link href={`#?testId=${test.testId}&anchor=video&run=${test.results.indexOf(resultWithVideo)}`} title='View video' className='test-file-badge'>{video()}</Link> : undefined;
-}
-
-function traceBadge(test: TestCaseSummary): JSX.Element | undefined {
-  const firstTraces = test.results.map(result => result.attachments.filter(attachment => attachment.name === 'trace')).filter(traces => traces.length > 0)[0];
-  return firstTraces ? <Link href={generateTraceUrl(firstTraces)} title='View trace' className='test-file-badge'>{trace()}</Link> : undefined;
+  return resultWithVideo ? <LinkBadge href={testResultHref({ test, result: resultWithVideo, anchor: 'attachment-video' })} title='View video' dim={true}>{video()}</LinkBadge> : undefined;
 }
 
 const LabelsClickView: React.FC<React.PropsWithChildren<{
   labels: string[],
 }>> = ({ labels }) => {
+  const searchParams = React.useContext(SearchParamsContext);
 
   const onClickHandle = (e: React.MouseEvent, label: string) => {
     e.preventDefault();
-    const searchParams = new URLSearchParams(window.location.hash.slice(1));
     const q = searchParams.get('q')?.toString() || '';
-    const tokens = q.split(' ');
-    navigate(filterWithToken(tokens, label, e.metaKey || e.ctrlKey));
+    navigate(filterWithQuery(q, label, e.metaKey || e.ctrlKey));
   };
 
   return labels.length > 0 ? (

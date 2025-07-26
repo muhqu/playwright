@@ -16,18 +16,20 @@
 
 import fs from 'fs';
 import path from 'path';
+
 import { Artifact } from '../artifact';
-import type { BrowserContext } from '../browserContext';
-import type * as har from '@trace/har';
 import { HarTracer } from './harTracer';
-import type { HarTracerDelegate } from './harTracer';
-import type * as channels from '@protocol/channels';
+import { createGuid } from '../utils/crypto';
+import { ManualPromise } from '../../utils/isomorphic/manualPromise';
 import { yazl } from '../../zipBundle';
+
+import type { BrowserContext } from '../browserContext';
+import type { HarTracerDelegate } from './harTracer';
 import type { ZipFile } from '../../zipBundle';
-import { ManualPromise } from '../../utils/manualPromise';
-import type EventEmitter from 'events';
-import { createGuid } from '../../utils';
 import type { Page } from '../page';
+import type * as channels from '@protocol/channels';
+import type * as har from '@trace/har';
+import type EventEmitter from 'events';
 
 export class HarRecorder implements HarTracerDelegate {
   private _artifact: Artifact;
@@ -40,7 +42,7 @@ export class HarRecorder implements HarTracerDelegate {
   constructor(context: BrowserContext, page: Page | null, options: channels.RecordHarOptions) {
     this._artifact = new Artifact(context, path.join(context._browser.options.artifactsDir, `${createGuid()}.har`));
     const urlFilterRe = options.urlRegexSource !== undefined && options.urlRegexFlags !== undefined ? new RegExp(options.urlRegexSource, options.urlRegexFlags) : undefined;
-    const expectsZip = options.path.endsWith('.zip');
+    const expectsZip = !!options.zip;
     const content = options.content || (expectsZip ? 'attach' : 'embed');
     this._tracer = new HarTracer(context, page, this, {
       content,

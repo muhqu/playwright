@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const {t, checkScheme} = ChromeUtils.import('chrome://juggler/content/protocol/PrimitiveTypes.js');
+const {t} = ChromeUtils.importESModule('chrome://juggler/content/protocol/PrimitiveTypes.js');
 
 // Protocol-specific types.
 const browserTypes = {};
@@ -394,12 +394,6 @@ const Browser = {
         viewport: t.Nullable(pageTypes.Viewport),
       }
     },
-    'setScrollbarsHidden': {
-      params: {
-        browserContextId: t.Optional(t.String),
-        hidden: t.Boolean,
-      }
-    },
     'setInitScripts': {
       params: {
         browserContextId: t.Optional(t.String),
@@ -467,6 +461,12 @@ const Browser = {
       params: {
         browserContextId: t.Optional(t.String),
         forcedColors: t.Nullable(t.Enum(['active', 'none'])),
+      },
+    },
+    'setContrast': {
+      params: {
+        browserContextId: t.Optional(t.String),
+        contrast: t.Nullable(t.Enum(['less', 'more', 'custom', 'no-preference'])),
       },
     },
     'setVideoRecordingOptions': {
@@ -800,6 +800,11 @@ const Page = {
         viewportSize: t.Nullable(pageTypes.Size),
       },
     },
+    'setZoom': {
+      params: {
+        zoom: t.Number,
+      },
+    },
     'bringToFront': {
       params: {
       },
@@ -810,6 +815,7 @@ const Page = {
         colorScheme: t.Optional(t.Enum(['dark', 'light', 'no-preference'])),
         reducedMotion: t.Optional(t.Enum(['reduce', 'no-preference'])),
         forcedColors: t.Optional(t.Enum(['active', 'none'])),
+        contrast: t.Optional(t.Enum(['less', 'more', 'custom', 'no-preference'])),
       },
     },
     'setCacheDisabled': {
@@ -1012,8 +1018,6 @@ const Accessibility = {
   }
 }
 
-this.protocol = {
+export const protocol = {
   domains: {Browser, Heap, Page, Runtime, Network, Accessibility},
 };
-this.checkScheme = checkScheme;
-this.EXPORTED_SYMBOLS = ['protocol', 'checkScheme'];

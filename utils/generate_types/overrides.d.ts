@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 import { ChildProcess } from 'child_process';
-import { EventEmitter } from 'events';
 import { Readable } from 'stream';
 import { ReadStream } from 'fs';
 import { Protocol } from './protocol';
@@ -226,8 +225,8 @@ export interface CDPSession {
 }
 
 export interface WebSocketRoute {
-  routeSend(handler: (message: string | Buffer) => any): void;
-  routeReceive(handler: (message: string | Buffer) => any): void;
+  onMessage(handler: (message: string | Buffer) => any): void;
+  onClose(handler: (code: number | undefined, reason: string | undefined) => any): void;
 }
 
 type DeviceDescriptor = {

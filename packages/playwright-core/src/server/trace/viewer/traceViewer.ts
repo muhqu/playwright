@@ -14,19 +14,22 @@
  * limitations under the License.
  */
 
-import path from 'path';
 import fs from 'fs';
-import { HttpServer } from '../../../utils/httpServer';
-import type { Transport } from '../../../utils/httpServer';
-import { gracefullyProcessExitDoNotHang, isUnderTest } from '../../../utils';
-import { syncLocalStorageWithSettings } from '../../launchApp';
+import path from 'path';
+
+import { gracefullyProcessExitDoNotHang } from '../../../utils';
+import { isUnderTest } from '../../../utils';
+import { HttpServer } from '../../utils/httpServer';
+import { open } from '../../../utilsBundle';
 import { serverSideCallMetadata } from '../../instrumentation';
+import { syncLocalStorageWithSettings } from '../../launchApp';
+import { launchApp } from '../../launchApp';
 import { createPlaywright } from '../../playwright';
 import { ProgressController } from '../../progress';
-import { open } from '../../../utilsBundle';
-import type { Page } from '../../page';
+
+import type { Transport } from '../../utils/httpServer';
 import type { BrowserType } from '../../browserType';
-import { launchApp } from '../../launchApp';
+import type { Page } from '../../page';
 
 export type TraceViewerServerOptions = {
   host?: string;
@@ -40,14 +43,9 @@ export type TraceViewerRedirectOptions = {
   grep?: string;
   grepInvert?: string;
   project?: string[];
-  workers?: number | string;
-  headed?: boolean;
-  timeout?: number;
   reporter?: string[];
   webApp?: string;
   isServer?: boolean;
-  outputDir?: string;
-  updateSnapshots?: 'all' | 'none' | 'missing';
 };
 
 export type TraceViewerAppOptions = {
@@ -72,6 +70,10 @@ export async function startTraceViewerServer(options?: TraceViewerServerOptions)
   server.routePrefix('/trace', (request, response) => {
     const url = new URL('http://localhost' + request.url!);
     const relativePath = url.pathname.slice('/trace'.length);
+    if (process.env.PW_HMR) {
+      // When running in Vite HMR mode, port is hardcoded in build.js
+      response.appendHeader('Access-Control-Allow-Origin', 'http://localhost:44223');
+    }
     if (relativePath.endsWith('/stall.js'))
       return true;
     if (relativePath.startsWith('/file')) {
@@ -127,20 +129,16 @@ export async function installRootRedirect(server: HttpServer, traceUrls: string[
     params.append('grepInvert', options.grepInvert);
   for (const project of options.project || [])
     params.append('project', project);
-  if (options.workers)
-    params.append('workers', String(options.workers));
-  if (options.timeout)
-    params.append('timeout', String(options.timeout));
-  if (options.headed)
-    params.append('headed', '');
-  if (options.outputDir)
-    params.append('outputDir', options.outputDir);
-  if (options.updateSnapshots)
-    params.append('updateSnapshots', options.updateSnapshots);
   for (const reporter of options.reporter || [])
     params.append('reporter', reporter);
 
-  const urlPath  = `./trace/${options.webApp || 'index.html'}?${params.toString()}`;
+  let baseUrl = '.';
+  if (process.env.PW_HMR) {
+    baseUrl = 'http://localhost:44223'; // port is hardcoded in build.js
+    params.set('server', server.urlPrefix('precise'));
+  }
+
+  const urlPath  = `${baseUrl}/trace/${options.webApp || 'index.html'}?${params.toString()}`;
   server.routePath('/', (_, response) => {
     response.statusCode = 302;
     response.setHeader('Location', urlPath);
@@ -171,31 +169,31 @@ export async function openTraceViewerApp(url: string, browserName: string, optio
   const traceViewerBrowser = isUnderTest() ? 'chromium' : browserName;
 
   const { context, page } = await launchApp(traceViewerPlaywright[traceViewerBrowser as 'chromium'], {
-    // TODO: store language in the trace.
     sdkLanguage: traceViewerPlaywright.options.sdkLanguage,
     windowSize: { width: 1280, height: 800 },
     persistentContextOptions: {
       ...options?.persistentContextOptions,
-      useWebSocket: isUnderTest(),
+      cdpPort: isUnderTest() ? 0 : undefined,
       headless: !!options?.headless,
+      colorScheme: isUnderTest() ? 'light' : undefined,
     },
   });
 
   const controller = new ProgressController(serverSideCallMetadata(), context._browser);
   await controller.run(async progress => {
     await context._browser._defaultContext!._loadDefaultContextAsIs(progress);
+
+    if (process.env.PWTEST_PRINT_WS_ENDPOINT)
+      process.stderr.write('DevTools listening on: ' + context._browser.options.wsEndpoint + '\n');
+
+    if (!isUnderTest())
+      await syncLocalStorageWithSettings(page, 'traceviewer');
+
+    if (isUnderTest())
+      page.on('close', () => context.close({ reason: 'Trace viewer closed' }).catch(() => {}));
+
+    await page.mainFrame().goto(progress, url);
   });
-
-  if (process.env.PWTEST_PRINT_WS_ENDPOINT)
-    process.stderr.write('DevTools listening on: ' + context._browser.options.wsEndpoint + '\n');
-
-  if (!isUnderTest())
-    await syncLocalStorageWithSettings(page, 'traceviewer');
-
-  if (isUnderTest())
-    page.on('close', () => context.close({ reason: 'Trace viewer closed' }).catch(() => {}));
-
-  await page.mainFrame().goto(serverSideCallMetadata(), url);
   return page;
 }
 

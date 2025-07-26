@@ -14,15 +14,16 @@
  * limitations under the License.
  */
 
-import type { RegisteredListener } from '../../utils/eventsHelper';
-import { eventsHelper } from '../../utils/eventsHelper';
-import type { Page } from '../page';
-import * as network from '../network';
-import type * as frames from '../frames';
-import type * as types from '../types';
-import * as bidi from './third_party/bidiProtocol';
-import type { BidiSession } from './bidiConnection';
+import { eventsHelper } from '../utils/eventsHelper';
 import { parseRawCookie } from '../cookieStore';
+import * as network from '../network';
+import * as bidi from './third_party/bidiProtocol';
+
+import type { RegisteredListener } from '../utils/eventsHelper';
+import type * as frames from '../frames';
+import type { Page } from '../page';
+import type * as types from '../types';
+import type { BidiSession } from './bidiConnection';
 
 
 export class BidiNetworkManager {
@@ -58,7 +59,7 @@ export class BidiNetworkManager {
     if (param.request.url.startsWith('data:'))
       return;
     const redirectedFrom = param.redirectCount ? (this._requests.get(param.request.request) || null) : null;
-    const frame = redirectedFrom ? redirectedFrom.request.frame() : (param.context ? this._page._frameManager.frame(param.context) : null);
+    const frame = redirectedFrom ? redirectedFrom.request.frame() : (param.context ? this._page.frameManager.frame(param.context) : null);
     if (!frame)
       return;
     if (redirectedFrom)
@@ -67,9 +68,13 @@ export class BidiNetworkManager {
     if (param.intercepts) {
       // We do not support intercepting redirects.
       if (redirectedFrom) {
+        let params = {};
+        if (redirectedFrom._originalRequestRoute?._alreadyContinuedHeaders)
+          params = toBidiRequestHeaders(redirectedFrom._originalRequestRoute._alreadyContinuedHeaders ?? []);
+
         this._session.sendMayFail('network.continueRequest', {
           request: param.request.request,
-          ...(redirectedFrom._originalRequestRoute?._alreadyContinuedHeaders || {}),
+          ...params,
         });
       } else {
         route = new BidiRouteImpl(this._session, param.request.request);
@@ -77,7 +82,7 @@ export class BidiNetworkManager {
     }
     const request = new BidiRequest(frame, redirectedFrom, param, route);
     this._requests.set(request._id, request);
-    this._page._frameManager.requestStarted(request.request, route);
+    this._page.frameManager.requestStarted(request.request, route);
   }
 
   private _onResponseStarted(params: bidi.Network.ResponseStartedParameters) {
@@ -92,10 +97,10 @@ export class BidiNetworkManager {
     function relativeToStart(time: number): number {
       if (!time)
         return -1;
-      return (time - startTime) / 1000;
+      return (time - startTime);
     }
     const timing: network.ResourceTiming = {
-      startTime: startTime / 1000,
+      startTime: startTime,
       requestStart: relativeToStart(timings.requestStart),
       responseStart: relativeToStart(timings.responseStart),
       domainLookupStart: relativeToStart(timings.dnsStart),
@@ -110,7 +115,7 @@ export class BidiNetworkManager {
     // "raw" headers are the same as "provisional" headers in Bidi.
     response.setRawResponseHeaders(null);
     response.setResponseHeadersSize(params.response.headersSize);
-    this._page._frameManager.requestReceivedResponse(response);
+    this._page.frameManager.requestReceivedResponse(response);
     if (params.navigation)
       this._onNavigationResponseStarted(params);
   }
@@ -126,7 +131,7 @@ export class BidiNetworkManager {
 
     // Keep redirected requests in the map for future reference as redirectedFrom.
     const isRedirected = response.status() >= 300 && response.status() <= 399;
-    const responseEndTime = params.request.timings.responseEnd / 1000 - response.timing().startTime;
+    const responseEndTime = params.request.timings.responseEnd - response.timing().startTime;
     if (isRedirected) {
       response._requestFinished(responseEndTime);
     } else {
@@ -134,7 +139,7 @@ export class BidiNetworkManager {
       response._requestFinished(responseEndTime);
     }
     response._setHttpVersion(params.response.protocol);
-    this._page._frameManager.reportRequestFinished(request.request, response);
+    this._page.frameManager.reportRequestFinished(request.request, response);
 
   }
 
@@ -151,12 +156,12 @@ export class BidiNetworkManager {
     }
     request.request._setFailureText(params.errorText);
     // TODO: support canceled flag
-    this._page._frameManager.requestFailed(request.request, params.errorText === 'NS_BINDING_ABORTED');
+    this._page.frameManager.requestFailed(request.request, params.errorText === 'NS_BINDING_ABORTED');
   }
 
   private _onAuthRequired(params: bidi.Network.AuthRequiredParameters) {
     const isBasic = params.response.authChallenges?.some(challenge => challenge.scheme.startsWith('Basic'));
-    const credentials = this._page._browserContext._options.httpCredentials;
+    const credentials = this._page.browserContext._options.httpCredentials;
     if (isBasic && credentials) {
       this._session.sendMayFail('network.continueWithAuth', {
         request: params.request.request,
@@ -225,7 +230,7 @@ class BidiRequest {
       redirectedFrom._redirectedTo = this;
     // TODO: missing in the spec?
     const postDataBuffer = null;
-    this.request = new network.Request(frame._page._browserContext, frame, null, redirectedFrom ? redirectedFrom.request : null, payload.navigation ?? undefined,
+    this.request = new network.Request(frame._page.browserContext, frame, null, redirectedFrom ? redirectedFrom.request : null, payload.navigation ?? undefined,
         payload.request.url, 'other', payload.request.method, postDataBuffer, fromBidiHeaders(payload.request.headers));
     // "raw" headers are the same as "provisional" headers in Bidi.
     this.request.setRawRequestHeaders(null);
@@ -302,11 +307,9 @@ function fromBidiHeaders(bidiHeaders: bidi.Network.Header[]): types.HeadersArray
   return result;
 }
 
-function toBidiRequestHeaders(allHeaders: types.HeadersArray): { cookies: bidi.Network.CookieHeader[], headers: bidi.Network.Header[] } {
+function toBidiRequestHeaders(allHeaders: types.HeadersArray): { headers: bidi.Network.Header[] } {
   const bidiHeaders = toBidiHeaders(allHeaders);
-  const cookies = bidiHeaders.filter(h => h.name.toLowerCase() === 'cookie');
-  const headers = bidiHeaders.filter(h => h.name.toLowerCase() !== 'cookie');
-  return { cookies, headers };
+  return { headers: bidiHeaders };
 }
 
 function toBidiResponseHeaders(headers: types.HeadersArray): { cookies: bidi.Network.SetCookieHeader[], headers: bidi.Network.Header[] } {

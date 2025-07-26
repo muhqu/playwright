@@ -32,7 +32,7 @@ scheme.Metadata = tObject({
     line: tOptional(tNumber),
     column: tOptional(tNumber),
   })),
-  apiName: tOptional(tString),
+  title: tOptional(tString),
   internal: tOptional(tBoolean),
   stepId: tOptional(tString),
 });
@@ -58,6 +58,10 @@ scheme.SerializedValue = tObject({
   d: tOptional(tString),
   u: tOptional(tString),
   bi: tOptional(tString),
+  ta: tOptional(tObject({
+    b: tBinary,
+    k: tEnum(['i8', 'ui8', 'ui8c', 'i16', 'ui16', 'i32', 'ui32', 'f32', 'f64', 'bi64', 'bui64']),
+  })),
   e: tOptional(tObject({
     m: tString,
     n: tString,
@@ -87,6 +91,11 @@ scheme.ExpectedTextValue = tObject({
   matchSubstring: tOptional(tBoolean),
   ignoreCase: tOptional(tBoolean),
   normalizeWhiteSpace: tOptional(tBoolean),
+});
+scheme.SelectorEngine = tObject({
+  name: tString,
+  source: tString,
+  contentScript: tOptional(tBoolean),
 });
 scheme.AXNode = tObject({
   role: tString,
@@ -127,6 +136,8 @@ scheme.SetNetworkCookie = tObject({
   httpOnly: tOptional(tBoolean),
   secure: tOptional(tBoolean),
   sameSite: tOptional(tEnum(['Strict', 'Lax', 'None'])),
+  partitionKey: tOptional(tString),
+  _crHasCrossSiteAncestor: tOptional(tBoolean),
 });
 scheme.NetworkCookie = tObject({
   name: tString,
@@ -137,14 +148,45 @@ scheme.NetworkCookie = tObject({
   httpOnly: tBoolean,
   secure: tBoolean,
   sameSite: tEnum(['Strict', 'Lax', 'None']),
+  partitionKey: tOptional(tString),
+  _crHasCrossSiteAncestor: tOptional(tBoolean),
 });
 scheme.NameValue = tObject({
   name: tString,
   value: tString,
 });
+scheme.IndexedDBDatabase = tObject({
+  name: tString,
+  version: tNumber,
+  stores: tArray(tObject({
+    name: tString,
+    autoIncrement: tBoolean,
+    keyPath: tOptional(tString),
+    keyPathArray: tOptional(tArray(tString)),
+    records: tArray(tObject({
+      key: tOptional(tAny),
+      keyEncoded: tOptional(tAny),
+      value: tOptional(tAny),
+      valueEncoded: tOptional(tAny),
+    })),
+    indexes: tArray(tObject({
+      name: tString,
+      keyPath: tOptional(tString),
+      keyPathArray: tOptional(tArray(tString)),
+      multiEntry: tBoolean,
+      unique: tBoolean,
+    })),
+  })),
+});
+scheme.SetOriginStorage = tObject({
+  origin: tString,
+  localStorage: tArray(tType('NameValue')),
+  indexedDB: tOptional(tArray(tType('IndexedDBDatabase'))),
+});
 scheme.OriginStorage = tObject({
   origin: tString,
   localStorage: tArray(tType('NameValue')),
+  indexedDB: tOptional(tArray(tType('IndexedDBDatabase'))),
 });
 scheme.SerializedError = tObject({
   error: tOptional(tObject({
@@ -155,7 +197,7 @@ scheme.SerializedError = tObject({
   value: tOptional(tType('SerializedValue')),
 });
 scheme.RecordHarOptions = tObject({
-  path: tString,
+  zip: tOptional(tBoolean),
   content: tOptional(tEnum(['embed', 'attach', 'omit'])),
   mode: tOptional(tEnum(['full', 'minimal'])),
   urlGlob: tOptional(tString),
@@ -184,7 +226,7 @@ scheme.APIRequestContextFetchParams = tObject({
   jsonData: tOptional(tString),
   formData: tOptional(tArray(tType('NameValue'))),
   multipartData: tOptional(tArray(tType('FormField'))),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   failOnStatusCode: tOptional(tBoolean),
   ignoreHTTPSErrors: tOptional(tBoolean),
   maxRedirects: tOptional(tNumber),
@@ -205,7 +247,9 @@ scheme.APIRequestContextFetchLogParams = tObject({
 scheme.APIRequestContextFetchLogResult = tObject({
   log: tArray(tString),
 });
-scheme.APIRequestContextStorageStateParams = tOptional(tObject({}));
+scheme.APIRequestContextStorageStateParams = tObject({
+  indexedDB: tOptional(tBoolean),
+});
 scheme.APIRequestContextStorageStateResult = tObject({
   cookies: tArray(tType('NetworkCookie')),
   origins: tArray(tType('OriginStorage')),
@@ -291,7 +335,7 @@ scheme.LocalUtilsConnectParams = tObject({
   headers: tOptional(tAny),
   exposeNetwork: tOptional(tString),
   slowMo: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   socksProxyRedirectPortForTest: tOptional(tNumber),
 });
 scheme.LocalUtilsConnectResult = tObject({
@@ -313,6 +357,14 @@ scheme.LocalUtilsTraceDiscardedParams = tObject({
   stacksId: tString,
 });
 scheme.LocalUtilsTraceDiscardedResult = tOptional(tObject({}));
+scheme.LocalUtilsGlobToRegexParams = tObject({
+  glob: tString,
+  baseURL: tOptional(tString),
+  webSocketUrl: tOptional(tBoolean),
+});
+scheme.LocalUtilsGlobToRegexResult = tObject({
+  regex: tString,
+});
 scheme.RootInitializer = tOptional(tObject({}));
 scheme.RootInitializeParams = tObject({
   sdkLanguage: tEnum(['javascript', 'python', 'java', 'csharp']),
@@ -324,12 +376,11 @@ scheme.PlaywrightInitializer = tObject({
   chromium: tChannel(['BrowserType']),
   firefox: tChannel(['BrowserType']),
   webkit: tChannel(['BrowserType']),
-  bidiChromium: tChannel(['BrowserType']),
-  bidiFirefox: tChannel(['BrowserType']),
+  _bidiChromium: tChannel(['BrowserType']),
+  _bidiFirefox: tChannel(['BrowserType']),
   android: tChannel(['Android']),
   electron: tChannel(['Electron']),
   utils: tOptional(tChannel(['LocalUtils'])),
-  selectors: tChannel(['Selectors']),
   preLaunchedBrowser: tOptional(tChannel(['Browser'])),
   preConnectedAndroidDevice: tOptional(tChannel(['AndroidDevice'])),
   socksSupport: tOptional(tChannel(['SocksSupport'])),
@@ -339,6 +390,7 @@ scheme.PlaywrightNewRequestParams = tObject({
   userAgent: tOptional(tString),
   ignoreHTTPSErrors: tOptional(tBoolean),
   extraHTTPHeaders: tOptional(tArray(tType('NameValue'))),
+  failOnStatusCode: tOptional(tBoolean),
   clientCertificates: tOptional(tArray(tObject({
     origin: tString,
     cert: tOptional(tBinary),
@@ -346,6 +398,7 @@ scheme.PlaywrightNewRequestParams = tObject({
     passphrase: tOptional(tString),
     pfx: tOptional(tBinary),
   }))),
+  maxRedirects: tOptional(tNumber),
   httpCredentials: tOptional(tObject({
     username: tString,
     password: tString,
@@ -358,10 +411,9 @@ scheme.PlaywrightNewRequestParams = tObject({
     username: tOptional(tString),
     password: tOptional(tString),
   })),
-  timeout: tOptional(tNumber),
   storageState: tOptional(tObject({
     cookies: tOptional(tArray(tType('NetworkCookie'))),
-    origins: tOptional(tArray(tType('OriginStorage'))),
+    origins: tOptional(tArray(tType('SetOriginStorage'))),
   })),
   tracesDir: tOptional(tString),
 });
@@ -385,6 +437,7 @@ scheme.DebugControllerInitializer = tOptional(tObject({}));
 scheme.DebugControllerInspectRequestedEvent = tObject({
   selector: tString,
   locator: tString,
+  ariaSnapshot: tString,
 });
 scheme.DebugControllerSetModeRequestedEvent = tObject({
   mode: tString,
@@ -422,7 +475,8 @@ scheme.DebugControllerSetRecorderModeParams = tObject({
 });
 scheme.DebugControllerSetRecorderModeResult = tOptional(tObject({}));
 scheme.DebugControllerHighlightParams = tObject({
-  selector: tString,
+  selector: tOptional(tString),
+  ariaTemplate: tOptional(tString),
 });
 scheme.DebugControllerHighlightResult = tOptional(tObject({}));
 scheme.DebugControllerHideHighlightParams = tOptional(tObject({}));
@@ -471,17 +525,6 @@ scheme.SocksSupportSocksEndParams = tObject({
   uid: tString,
 });
 scheme.SocksSupportSocksEndResult = tOptional(tObject({}));
-scheme.SelectorsInitializer = tOptional(tObject({}));
-scheme.SelectorsRegisterParams = tObject({
-  name: tString,
-  source: tString,
-  contentScript: tOptional(tBoolean),
-});
-scheme.SelectorsRegisterResult = tOptional(tObject({}));
-scheme.SelectorsSetTestIdAttributeNameParams = tObject({
-  testIdAttributeName: tString,
-});
-scheme.SelectorsSetTestIdAttributeNameResult = tOptional(tObject({}));
 scheme.BrowserTypeInitializer = tObject({
   executablePath: tString,
   name: tString,
@@ -492,10 +535,11 @@ scheme.BrowserTypeLaunchParams = tObject({
   args: tOptional(tArray(tString)),
   ignoreAllDefaultArgs: tOptional(tBoolean),
   ignoreDefaultArgs: tOptional(tArray(tString)),
+  assistantMode: tOptional(tBoolean),
   handleSIGINT: tOptional(tBoolean),
   handleSIGTERM: tOptional(tBoolean),
   handleSIGHUP: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   env: tOptional(tArray(tType('NameValue'))),
   headless: tOptional(tBoolean),
   devtools: tOptional(tBoolean),
@@ -509,6 +553,7 @@ scheme.BrowserTypeLaunchParams = tObject({
   tracesDir: tOptional(tString),
   chromiumSandbox: tOptional(tBoolean),
   firefoxUserPrefs: tOptional(tAny),
+  cdpPort: tOptional(tNumber),
   slowMo: tOptional(tNumber),
 });
 scheme.BrowserTypeLaunchResult = tObject({
@@ -520,10 +565,11 @@ scheme.BrowserTypeLaunchPersistentContextParams = tObject({
   args: tOptional(tArray(tString)),
   ignoreAllDefaultArgs: tOptional(tBoolean),
   ignoreDefaultArgs: tOptional(tArray(tString)),
+  assistantMode: tOptional(tBoolean),
   handleSIGINT: tOptional(tBoolean),
   handleSIGTERM: tOptional(tBoolean),
   handleSIGHUP: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   env: tOptional(tArray(tType('NameValue'))),
   headless: tOptional(tBoolean),
   devtools: tOptional(tBoolean),
@@ -537,6 +583,7 @@ scheme.BrowserTypeLaunchPersistentContextParams = tObject({
   tracesDir: tOptional(tString),
   chromiumSandbox: tOptional(tBoolean),
   firefoxUserPrefs: tOptional(tAny),
+  cdpPort: tOptional(tNumber),
   noDefaultViewport: tOptional(tBoolean),
   viewport: tOptional(tObject({
     width: tNumber,
@@ -580,6 +627,7 @@ scheme.BrowserTypeLaunchPersistentContextParams = tObject({
   reducedMotion: tOptional(tEnum(['reduce', 'no-preference', 'no-override'])),
   forcedColors: tOptional(tEnum(['active', 'none', 'no-override'])),
   acceptDownloads: tOptional(tEnum(['accept', 'deny', 'internal-browser-default'])),
+  contrast: tOptional(tEnum(['no-preference', 'more', 'no-override'])),
   baseURL: tOptional(tString),
   recordVideo: tOptional(tObject({
     dir: tString,
@@ -588,20 +636,22 @@ scheme.BrowserTypeLaunchPersistentContextParams = tObject({
       height: tNumber,
     })),
   })),
-  recordHar: tOptional(tType('RecordHarOptions')),
   strictSelectors: tOptional(tBoolean),
   serviceWorkers: tOptional(tEnum(['allow', 'block'])),
+  selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
+  testIdAttributeName: tOptional(tString),
   userDataDir: tString,
   slowMo: tOptional(tNumber),
 });
 scheme.BrowserTypeLaunchPersistentContextResult = tObject({
+  browser: tChannel(['Browser']),
   context: tChannel(['BrowserContext']),
 });
 scheme.BrowserTypeConnectOverCDPParams = tObject({
   endpointURL: tString,
   headers: tOptional(tArray(tType('NameValue'))),
   slowMo: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.BrowserTypeConnectOverCDPResult = tObject({
   browser: tChannel(['Browser']),
@@ -610,6 +660,9 @@ scheme.BrowserTypeConnectOverCDPResult = tObject({
 scheme.BrowserInitializer = tObject({
   version: tString,
   name: tString,
+});
+scheme.BrowserContextEvent = tObject({
+  context: tChannel(['BrowserContext']),
 });
 scheme.BrowserCloseEvent = tOptional(tObject({}));
 scheme.BrowserCloseParams = tObject({
@@ -666,6 +719,7 @@ scheme.BrowserNewContextParams = tObject({
   reducedMotion: tOptional(tEnum(['reduce', 'no-preference', 'no-override'])),
   forcedColors: tOptional(tEnum(['active', 'none', 'no-override'])),
   acceptDownloads: tOptional(tEnum(['accept', 'deny', 'internal-browser-default'])),
+  contrast: tOptional(tEnum(['no-preference', 'more', 'no-override'])),
   baseURL: tOptional(tString),
   recordVideo: tOptional(tObject({
     dir: tString,
@@ -674,9 +728,10 @@ scheme.BrowserNewContextParams = tObject({
       height: tNumber,
     })),
   })),
-  recordHar: tOptional(tType('RecordHarOptions')),
   strictSelectors: tOptional(tBoolean),
   serviceWorkers: tOptional(tEnum(['allow', 'block'])),
+  selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
+  testIdAttributeName: tOptional(tString),
   proxy: tOptional(tObject({
     server: tString,
     bypass: tOptional(tString),
@@ -685,7 +740,7 @@ scheme.BrowserNewContextParams = tObject({
   })),
   storageState: tOptional(tObject({
     cookies: tOptional(tArray(tType('SetNetworkCookie'))),
-    origins: tOptional(tArray(tType('OriginStorage'))),
+    origins: tOptional(tArray(tType('SetOriginStorage'))),
   })),
 });
 scheme.BrowserNewContextResult = tObject({
@@ -735,6 +790,7 @@ scheme.BrowserNewContextForReuseParams = tObject({
   reducedMotion: tOptional(tEnum(['reduce', 'no-preference', 'no-override'])),
   forcedColors: tOptional(tEnum(['active', 'none', 'no-override'])),
   acceptDownloads: tOptional(tEnum(['accept', 'deny', 'internal-browser-default'])),
+  contrast: tOptional(tEnum(['no-preference', 'more', 'no-override'])),
   baseURL: tOptional(tString),
   recordVideo: tOptional(tObject({
     dir: tString,
@@ -743,9 +799,10 @@ scheme.BrowserNewContextForReuseParams = tObject({
       height: tNumber,
     })),
   })),
-  recordHar: tOptional(tType('RecordHarOptions')),
   strictSelectors: tOptional(tBoolean),
   serviceWorkers: tOptional(tEnum(['allow', 'block'])),
+  selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
+  testIdAttributeName: tOptional(tString),
   proxy: tOptional(tObject({
     server: tString,
     bypass: tOptional(tString),
@@ -754,16 +811,16 @@ scheme.BrowserNewContextForReuseParams = tObject({
   })),
   storageState: tOptional(tObject({
     cookies: tOptional(tArray(tType('SetNetworkCookie'))),
-    origins: tOptional(tArray(tType('OriginStorage'))),
+    origins: tOptional(tArray(tType('SetOriginStorage'))),
   })),
 });
 scheme.BrowserNewContextForReuseResult = tObject({
   context: tChannel(['BrowserContext']),
 });
-scheme.BrowserStopPendingOperationsParams = tObject({
+scheme.BrowserDisconnectFromReusedContextParams = tObject({
   reason: tString,
 });
-scheme.BrowserStopPendingOperationsResult = tOptional(tObject({}));
+scheme.BrowserDisconnectFromReusedContextResult = tOptional(tObject({}));
 scheme.BrowserNewBrowserCDPSessionParams = tOptional(tObject({}));
 scheme.BrowserNewBrowserCDPSessionResult = tObject({
   session: tChannel(['CDPSession']),
@@ -803,6 +860,64 @@ scheme.BrowserContextInitializer = tObject({
   isChromium: tBoolean,
   requestContext: tChannel(['APIRequestContext']),
   tracing: tChannel(['Tracing']),
+  options: tObject({
+    noDefaultViewport: tOptional(tBoolean),
+    viewport: tOptional(tObject({
+      width: tNumber,
+      height: tNumber,
+    })),
+    screen: tOptional(tObject({
+      width: tNumber,
+      height: tNumber,
+    })),
+    ignoreHTTPSErrors: tOptional(tBoolean),
+    clientCertificates: tOptional(tArray(tObject({
+      origin: tString,
+      cert: tOptional(tBinary),
+      key: tOptional(tBinary),
+      passphrase: tOptional(tString),
+      pfx: tOptional(tBinary),
+    }))),
+    javaScriptEnabled: tOptional(tBoolean),
+    bypassCSP: tOptional(tBoolean),
+    userAgent: tOptional(tString),
+    locale: tOptional(tString),
+    timezoneId: tOptional(tString),
+    geolocation: tOptional(tObject({
+      longitude: tNumber,
+      latitude: tNumber,
+      accuracy: tOptional(tNumber),
+    })),
+    permissions: tOptional(tArray(tString)),
+    extraHTTPHeaders: tOptional(tArray(tType('NameValue'))),
+    offline: tOptional(tBoolean),
+    httpCredentials: tOptional(tObject({
+      username: tString,
+      password: tString,
+      origin: tOptional(tString),
+      send: tOptional(tEnum(['always', 'unauthorized'])),
+    })),
+    deviceScaleFactor: tOptional(tNumber),
+    isMobile: tOptional(tBoolean),
+    hasTouch: tOptional(tBoolean),
+    colorScheme: tOptional(tEnum(['dark', 'light', 'no-preference', 'no-override'])),
+    reducedMotion: tOptional(tEnum(['reduce', 'no-preference', 'no-override'])),
+    forcedColors: tOptional(tEnum(['active', 'none', 'no-override'])),
+    acceptDownloads: tOptional(tEnum(['accept', 'deny', 'internal-browser-default'])),
+    contrast: tOptional(tEnum(['no-preference', 'more', 'no-override'])),
+    baseURL: tOptional(tString),
+    recordVideo: tOptional(tObject({
+      dir: tString,
+      size: tOptional(tObject({
+        width: tNumber,
+        height: tNumber,
+      })),
+    })),
+    strictSelectors: tOptional(tBoolean),
+    serviceWorkers: tOptional(tEnum(['allow', 'block'])),
+    selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
+    testIdAttributeName: tOptional(tString),
+  }),
 });
 scheme.BrowserContextBindingCallEvent = tObject({
   binding: tChannel(['BindingCall']),
@@ -864,6 +979,11 @@ scheme.BrowserContextResponseEvent = tObject({
   response: tChannel(['Response']),
   page: tOptional(tChannel(['Page'])),
 });
+scheme.BrowserContextRecorderEventEvent = tObject({
+  event: tEnum(['actionAdded', 'actionUpdated', 'signalAdded']),
+  data: tAny,
+  page: tChannel(['Page']),
+});
 scheme.BrowserContextAddCookiesParams = tObject({
   cookies: tArray(tType('SetNetworkCookie')),
 });
@@ -910,14 +1030,14 @@ scheme.BrowserContextNewPageParams = tOptional(tObject({}));
 scheme.BrowserContextNewPageResult = tObject({
   page: tChannel(['Page']),
 });
-scheme.BrowserContextSetDefaultNavigationTimeoutNoReplyParams = tObject({
-  timeout: tOptional(tNumber),
+scheme.BrowserContextRegisterSelectorEngineParams = tObject({
+  selectorEngine: tType('SelectorEngine'),
 });
-scheme.BrowserContextSetDefaultNavigationTimeoutNoReplyResult = tOptional(tObject({}));
-scheme.BrowserContextSetDefaultTimeoutNoReplyParams = tObject({
-  timeout: tOptional(tNumber),
+scheme.BrowserContextRegisterSelectorEngineResult = tOptional(tObject({}));
+scheme.BrowserContextSetTestIdAttributeNameParams = tObject({
+  testIdAttributeName: tString,
 });
-scheme.BrowserContextSetDefaultTimeoutNoReplyResult = tOptional(tObject({}));
+scheme.BrowserContextSetTestIdAttributeNameResult = tOptional(tObject({}));
 scheme.BrowserContextSetExtraHTTPHeadersParams = tObject({
   headers: tArray(tType('NameValue')),
 });
@@ -958,7 +1078,9 @@ scheme.BrowserContextSetOfflineParams = tObject({
   offline: tBoolean,
 });
 scheme.BrowserContextSetOfflineResult = tOptional(tObject({}));
-scheme.BrowserContextStorageStateParams = tOptional(tObject({}));
+scheme.BrowserContextStorageStateParams = tObject({
+  indexedDB: tOptional(tBoolean),
+});
 scheme.BrowserContextStorageStateResult = tObject({
   cookies: tArray(tType('NetworkCookie')),
   origins: tArray(tType('OriginStorage')),
@@ -968,7 +1090,7 @@ scheme.BrowserContextPauseResult = tOptional(tObject({}));
 scheme.BrowserContextEnableRecorderParams = tObject({
   language: tOptional(tString),
   mode: tOptional(tEnum(['inspecting', 'recording'])),
-  codegenMode: tOptional(tEnum(['actions', 'trace-events'])),
+  recorderMode: tOptional(tEnum(['default', 'api'])),
   pauseOnNextStatement: tOptional(tBoolean),
   testIdAttributeName: tOptional(tString),
   launchOptions: tOptional(tAny),
@@ -976,9 +1098,12 @@ scheme.BrowserContextEnableRecorderParams = tObject({
   device: tOptional(tString),
   saveStorage: tOptional(tString),
   outputFile: tOptional(tString),
+  handleSIGINT: tOptional(tBoolean),
   omitCallTracking: tOptional(tBoolean),
 });
 scheme.BrowserContextEnableRecorderResult = tOptional(tObject({}));
+scheme.BrowserContextDisableRecorderParams = tOptional(tObject({}));
+scheme.BrowserContextDisableRecorderResult = tOptional(tObject({}));
 scheme.BrowserContextNewCDPSessionParams = tObject({
   page: tOptional(tChannel(['Page'])),
   frame: tOptional(tChannel(['Frame'])),
@@ -1066,6 +1191,12 @@ scheme.PageDownloadEvent = tObject({
   suggestedFilename: tString,
   artifact: tChannel(['Artifact']),
 });
+scheme.PageViewportSizeChangedEvent = tObject({
+  viewportSize: tOptional(tObject({
+    width: tNumber,
+    height: tNumber,
+  })),
+});
 scheme.PageFileChooserEvent = tObject({
   element: tChannel(['ElementHandle']),
   isMultiple: tBoolean,
@@ -1094,14 +1225,6 @@ scheme.PageWebSocketEvent = tObject({
 scheme.PageWorkerEvent = tObject({
   worker: tChannel(['Worker']),
 });
-scheme.PageSetDefaultNavigationTimeoutNoReplyParams = tObject({
-  timeout: tOptional(tNumber),
-});
-scheme.PageSetDefaultNavigationTimeoutNoReplyResult = tOptional(tObject({}));
-scheme.PageSetDefaultTimeoutNoReplyParams = tObject({
-  timeout: tOptional(tNumber),
-});
-scheme.PageSetDefaultTimeoutNoReplyResult = tOptional(tObject({}));
 scheme.PageAddInitScriptParams = tObject({
   source: tString,
 });
@@ -1116,6 +1239,7 @@ scheme.PageEmulateMediaParams = tObject({
   colorScheme: tOptional(tEnum(['dark', 'light', 'no-preference', 'no-override'])),
   reducedMotion: tOptional(tEnum(['reduce', 'no-preference', 'no-override'])),
   forcedColors: tOptional(tEnum(['active', 'none', 'no-override'])),
+  contrast: tOptional(tEnum(['no-preference', 'more', 'no-override'])),
 });
 scheme.PageEmulateMediaResult = tOptional(tObject({}));
 scheme.PageExposeBindingParams = tObject({
@@ -1124,21 +1248,21 @@ scheme.PageExposeBindingParams = tObject({
 });
 scheme.PageExposeBindingResult = tOptional(tObject({}));
 scheme.PageGoBackParams = tObject({
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   waitUntil: tOptional(tType('LifecycleEvent')),
 });
 scheme.PageGoBackResult = tObject({
   response: tOptional(tChannel(['Response'])),
 });
 scheme.PageGoForwardParams = tObject({
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   waitUntil: tOptional(tType('LifecycleEvent')),
 });
 scheme.PageGoForwardResult = tObject({
   response: tOptional(tChannel(['Response'])),
 });
-scheme.PageForceGarbageCollectionParams = tOptional(tObject({}));
-scheme.PageForceGarbageCollectionResult = tOptional(tObject({}));
+scheme.PageRequestGCParams = tOptional(tObject({}));
+scheme.PageRequestGCResult = tOptional(tObject({}));
 scheme.PageRegisterLocatorHandlerParams = tObject({
   selector: tString,
   noWaitAfter: tOptional(tBoolean),
@@ -1156,7 +1280,7 @@ scheme.PageUnregisterLocatorHandlerParams = tObject({
 });
 scheme.PageUnregisterLocatorHandlerResult = tOptional(tObject({}));
 scheme.PageReloadParams = tObject({
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   waitUntil: tOptional(tType('LifecycleEvent')),
 });
 scheme.PageReloadResult = tObject({
@@ -1164,7 +1288,7 @@ scheme.PageReloadResult = tObject({
 });
 scheme.PageExpectScreenshotParams = tObject({
   expected: tOptional(tBinary),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   isNot: tBoolean,
   locator: tOptional(tObject({
     frame: tChannel(['Frame']),
@@ -1192,10 +1316,11 @@ scheme.PageExpectScreenshotResult = tObject({
   errorMessage: tOptional(tString),
   actual: tOptional(tBinary),
   previous: tOptional(tBinary),
+  timedOut: tOptional(tBoolean),
   log: tOptional(tArray(tString)),
 });
 scheme.PageScreenshotParams = tObject({
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   type: tOptional(tEnum(['png', 'jpeg'])),
   quality: tOptional(tNumber),
   fullPage: tOptional(tBoolean),
@@ -1328,6 +1453,10 @@ scheme.PagePdfParams = tObject({
 scheme.PagePdfResult = tObject({
   pdf: tBinary,
 });
+scheme.PageSnapshotForAIParams = tOptional(tObject({}));
+scheme.PageSnapshotForAIResult = tObject({
+  snapshot: tString,
+});
 scheme.PageStartJSCoverageParams = tObject({
   resetOnNavigation: tOptional(tBoolean),
   reportAnonymousScripts: tOptional(tBoolean),
@@ -1424,10 +1553,18 @@ scheme.FrameAddStyleTagParams = tObject({
 scheme.FrameAddStyleTagResult = tObject({
   element: tChannel(['ElementHandle']),
 });
+scheme.FrameAriaSnapshotParams = tObject({
+  selector: tString,
+  forAI: tOptional(tBoolean),
+  timeout: tNumber,
+});
+scheme.FrameAriaSnapshotResult = tObject({
+  snapshot: tString,
+});
 scheme.FrameBlurParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameBlurResult = tOptional(tObject({}));
 scheme.FrameCheckParams = tObject({
@@ -1435,7 +1572,7 @@ scheme.FrameCheckParams = tObject({
   strict: tOptional(tBoolean),
   force: tOptional(tBoolean),
   position: tOptional(tType('Point')),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.FrameCheckResult = tOptional(tObject({}));
@@ -1449,7 +1586,7 @@ scheme.FrameClickParams = tObject({
   delay: tOptional(tNumber),
   button: tOptional(tEnum(['left', 'right', 'middle'])),
   clickCount: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.FrameClickResult = tOptional(tObject({}));
@@ -1461,7 +1598,7 @@ scheme.FrameDragAndDropParams = tObject({
   source: tString,
   target: tString,
   force: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
   sourcePosition: tOptional(tType('Point')),
   targetPosition: tOptional(tType('Point')),
@@ -1476,7 +1613,7 @@ scheme.FrameDblclickParams = tObject({
   position: tOptional(tType('Point')),
   delay: tOptional(tNumber),
   button: tOptional(tEnum(['left', 'right', 'middle'])),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.FrameDblclickResult = tOptional(tObject({}));
@@ -1485,7 +1622,7 @@ scheme.FrameDispatchEventParams = tObject({
   strict: tOptional(tBoolean),
   type: tString,
   eventInit: tType('SerializedArgument'),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameDispatchEventResult = tOptional(tObject({}));
 scheme.FrameEvaluateExpressionParams = tObject({
@@ -1509,18 +1646,24 @@ scheme.FrameFillParams = tObject({
   strict: tOptional(tBoolean),
   value: tString,
   force: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameFillResult = tOptional(tObject({}));
 scheme.FrameFocusParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameFocusResult = tOptional(tObject({}));
 scheme.FrameFrameElementParams = tOptional(tObject({}));
 scheme.FrameFrameElementResult = tObject({
   element: tChannel(['ElementHandle']),
+});
+scheme.FrameGenerateLocatorStringParams = tObject({
+  selector: tString,
+});
+scheme.FrameGenerateLocatorStringResult = tObject({
+  value: tOptional(tString),
 });
 scheme.FrameHighlightParams = tObject({
   selector: tString,
@@ -1530,14 +1673,14 @@ scheme.FrameGetAttributeParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
   name: tString,
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameGetAttributeResult = tObject({
   value: tOptional(tString),
 });
 scheme.FrameGotoParams = tObject({
   url: tString,
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   waitUntil: tOptional(tType('LifecycleEvent')),
   referer: tOptional(tString),
 });
@@ -1550,14 +1693,14 @@ scheme.FrameHoverParams = tObject({
   force: tOptional(tBoolean),
   modifiers: tOptional(tArray(tEnum(['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift']))),
   position: tOptional(tType('Point')),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.FrameHoverResult = tOptional(tObject({}));
 scheme.FrameInnerHTMLParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameInnerHTMLResult = tObject({
   value: tString,
@@ -1565,7 +1708,7 @@ scheme.FrameInnerHTMLResult = tObject({
 scheme.FrameInnerTextParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameInnerTextResult = tObject({
   value: tString,
@@ -1573,7 +1716,7 @@ scheme.FrameInnerTextResult = tObject({
 scheme.FrameInputValueParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameInputValueResult = tObject({
   value: tString,
@@ -1581,7 +1724,7 @@ scheme.FrameInputValueResult = tObject({
 scheme.FrameIsCheckedParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameIsCheckedResult = tObject({
   value: tBoolean,
@@ -1589,7 +1732,7 @@ scheme.FrameIsCheckedResult = tObject({
 scheme.FrameIsDisabledParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameIsDisabledResult = tObject({
   value: tBoolean,
@@ -1597,7 +1740,7 @@ scheme.FrameIsDisabledResult = tObject({
 scheme.FrameIsEnabledParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameIsEnabledResult = tObject({
   value: tBoolean,
@@ -1619,7 +1762,7 @@ scheme.FrameIsVisibleResult = tObject({
 scheme.FrameIsEditableParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameIsEditableResult = tObject({
   value: tBoolean,
@@ -1630,7 +1773,7 @@ scheme.FramePressParams = tObject({
   key: tString,
   delay: tOptional(tNumber),
   noWaitAfter: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FramePressResult = tOptional(tObject({}));
 scheme.FrameQuerySelectorParams = tObject({
@@ -1663,14 +1806,14 @@ scheme.FrameSelectOptionParams = tObject({
     index: tOptional(tNumber),
   }))),
   force: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameSelectOptionResult = tObject({
   values: tArray(tString),
 });
 scheme.FrameSetContentParams = tObject({
   html: tString,
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   waitUntil: tOptional(tType('LifecycleEvent')),
 });
 scheme.FrameSetContentResult = tOptional(tObject({}));
@@ -1686,7 +1829,7 @@ scheme.FrameSetInputFilesParams = tObject({
   directoryStream: tOptional(tChannel(['WritableStream'])),
   localPaths: tOptional(tArray(tString)),
   streams: tOptional(tArray(tChannel(['WritableStream']))),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameSetInputFilesResult = tOptional(tObject({}));
 scheme.FrameTapParams = tObject({
@@ -1695,14 +1838,14 @@ scheme.FrameTapParams = tObject({
   force: tOptional(tBoolean),
   modifiers: tOptional(tArray(tEnum(['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift']))),
   position: tOptional(tType('Point')),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.FrameTapResult = tOptional(tObject({}));
 scheme.FrameTextContentParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameTextContentResult = tObject({
   value: tOptional(tString),
@@ -1716,7 +1859,7 @@ scheme.FrameTypeParams = tObject({
   strict: tOptional(tBoolean),
   text: tString,
   delay: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameTypeResult = tOptional(tObject({}));
 scheme.FrameUncheckParams = tObject({
@@ -1724,19 +1867,19 @@ scheme.FrameUncheckParams = tObject({
   strict: tOptional(tBoolean),
   force: tOptional(tBoolean),
   position: tOptional(tType('Point')),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.FrameUncheckResult = tOptional(tObject({}));
 scheme.FrameWaitForTimeoutParams = tObject({
-  timeout: tNumber,
+  waitTimeout: tNumber,
 });
 scheme.FrameWaitForTimeoutResult = tOptional(tObject({}));
 scheme.FrameWaitForFunctionParams = tObject({
   expression: tString,
   isFunction: tOptional(tBoolean),
   arg: tType('SerializedArgument'),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   pollingInterval: tOptional(tNumber),
 });
 scheme.FrameWaitForFunctionResult = tObject({
@@ -1745,7 +1888,7 @@ scheme.FrameWaitForFunctionResult = tObject({
 scheme.FrameWaitForSelectorParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   state: tOptional(tEnum(['attached', 'detached', 'visible', 'hidden'])),
   omitReturnValue: tOptional(tBoolean),
 });
@@ -1753,7 +1896,7 @@ scheme.FrameWaitForSelectorResult = tObject({
   element: tOptional(tChannel(['ElementHandle'])),
 });
 scheme.FrameExpectParams = tObject({
-  selector: tString,
+  selector: tOptional(tString),
   expression: tString,
   expressionArg: tOptional(tAny),
   expectedText: tOptional(tArray(tType('ExpectedTextValue'))),
@@ -1761,7 +1904,7 @@ scheme.FrameExpectParams = tObject({
   expectedValue: tOptional(tType('SerializedArgument')),
   useInnerText: tOptional(tBoolean),
   isNot: tBoolean,
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.FrameExpectResult = tObject({
   matches: tBoolean,
@@ -1843,12 +1986,6 @@ scheme.JSHandleJsonValueResult = tObject({
   value: tType('SerializedValue'),
 });
 scheme.ElementHandleJsonValueResult = tType('JSHandleJsonValueResult');
-scheme.JSHandleObjectCountParams = tOptional(tObject({}));
-scheme.ElementHandleObjectCountParams = tType('JSHandleObjectCountParams');
-scheme.JSHandleObjectCountResult = tObject({
-  count: tNumber,
-});
-scheme.ElementHandleObjectCountResult = tType('JSHandleObjectCountResult');
 scheme.ElementHandleInitializer = tObject({
   preview: tString,
 });
@@ -1878,7 +2015,7 @@ scheme.ElementHandleBoundingBoxResult = tObject({
 scheme.ElementHandleCheckParams = tObject({
   force: tOptional(tBoolean),
   position: tOptional(tType('Point')),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.ElementHandleCheckResult = tOptional(tObject({}));
@@ -1890,7 +2027,7 @@ scheme.ElementHandleClickParams = tObject({
   delay: tOptional(tNumber),
   button: tOptional(tEnum(['left', 'right', 'middle'])),
   clickCount: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.ElementHandleClickResult = tOptional(tObject({}));
@@ -1904,7 +2041,7 @@ scheme.ElementHandleDblclickParams = tObject({
   position: tOptional(tType('Point')),
   delay: tOptional(tNumber),
   button: tOptional(tEnum(['left', 'right', 'middle'])),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.ElementHandleDblclickResult = tOptional(tObject({}));
@@ -1916,7 +2053,7 @@ scheme.ElementHandleDispatchEventResult = tOptional(tObject({}));
 scheme.ElementHandleFillParams = tObject({
   value: tString,
   force: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.ElementHandleFillResult = tOptional(tObject({}));
 scheme.ElementHandleFocusParams = tOptional(tObject({}));
@@ -1931,7 +2068,7 @@ scheme.ElementHandleHoverParams = tObject({
   force: tOptional(tBoolean),
   modifiers: tOptional(tArray(tEnum(['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift']))),
   position: tOptional(tType('Point')),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.ElementHandleHoverResult = tOptional(tObject({}));
@@ -1978,7 +2115,7 @@ scheme.ElementHandleOwnerFrameResult = tObject({
 scheme.ElementHandlePressParams = tObject({
   key: tString,
   delay: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   noWaitAfter: tOptional(tBoolean),
 });
 scheme.ElementHandlePressResult = tOptional(tObject({}));
@@ -1996,7 +2133,7 @@ scheme.ElementHandleQuerySelectorAllResult = tObject({
   elements: tArray(tChannel(['ElementHandle'])),
 });
 scheme.ElementHandleScreenshotParams = tObject({
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   type: tOptional(tEnum(['png', 'jpeg'])),
   quality: tOptional(tNumber),
   omitBackground: tOptional(tBoolean),
@@ -2014,7 +2151,7 @@ scheme.ElementHandleScreenshotResult = tObject({
   binary: tBinary,
 });
 scheme.ElementHandleScrollIntoViewIfNeededParams = tObject({
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.ElementHandleScrollIntoViewIfNeededResult = tOptional(tObject({}));
 scheme.ElementHandleSelectOptionParams = tObject({
@@ -2026,14 +2163,14 @@ scheme.ElementHandleSelectOptionParams = tObject({
     index: tOptional(tNumber),
   }))),
   force: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.ElementHandleSelectOptionResult = tObject({
   values: tArray(tString),
 });
 scheme.ElementHandleSelectTextParams = tObject({
   force: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.ElementHandleSelectTextResult = tOptional(tObject({}));
 scheme.ElementHandleSetInputFilesParams = tObject({
@@ -2046,14 +2183,14 @@ scheme.ElementHandleSetInputFilesParams = tObject({
   directoryStream: tOptional(tChannel(['WritableStream'])),
   localPaths: tOptional(tArray(tString)),
   streams: tOptional(tArray(tChannel(['WritableStream']))),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.ElementHandleSetInputFilesResult = tOptional(tObject({}));
 scheme.ElementHandleTapParams = tObject({
   force: tOptional(tBoolean),
   modifiers: tOptional(tArray(tEnum(['Alt', 'Control', 'ControlOrMeta', 'Meta', 'Shift']))),
   position: tOptional(tType('Point')),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.ElementHandleTapResult = tOptional(tObject({}));
@@ -2064,25 +2201,25 @@ scheme.ElementHandleTextContentResult = tObject({
 scheme.ElementHandleTypeParams = tObject({
   text: tString,
   delay: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.ElementHandleTypeResult = tOptional(tObject({}));
 scheme.ElementHandleUncheckParams = tObject({
   force: tOptional(tBoolean),
   position: tOptional(tType('Point')),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   trial: tOptional(tBoolean),
 });
 scheme.ElementHandleUncheckResult = tOptional(tObject({}));
 scheme.ElementHandleWaitForElementStateParams = tObject({
   state: tEnum(['visible', 'hidden', 'stable', 'enabled', 'disabled', 'editable']),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.ElementHandleWaitForElementStateResult = tOptional(tObject({}));
 scheme.ElementHandleWaitForSelectorParams = tObject({
   selector: tString,
   strict: tOptional(tBoolean),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   state: tOptional(tEnum(['attached', 'detached', 'visible', 'hidden'])),
 });
 scheme.ElementHandleWaitForSelectorResult = tObject({
@@ -2145,7 +2282,16 @@ scheme.WebSocketRouteMessageFromServerEvent = tObject({
   message: tString,
   isBase64: tBoolean,
 });
-scheme.WebSocketRouteCloseEvent = tOptional(tObject({}));
+scheme.WebSocketRouteClosePageEvent = tObject({
+  code: tOptional(tNumber),
+  reason: tOptional(tString),
+  wasClean: tBoolean,
+});
+scheme.WebSocketRouteCloseServerEvent = tObject({
+  code: tOptional(tNumber),
+  reason: tOptional(tString),
+  wasClean: tBoolean,
+});
 scheme.WebSocketRouteConnectParams = tOptional(tObject({}));
 scheme.WebSocketRouteConnectResult = tOptional(tObject({}));
 scheme.WebSocketRouteEnsureOpenedParams = tOptional(tObject({}));
@@ -2160,11 +2306,18 @@ scheme.WebSocketRouteSendToServerParams = tObject({
   isBase64: tBoolean,
 });
 scheme.WebSocketRouteSendToServerResult = tOptional(tObject({}));
-scheme.WebSocketRouteCloseParams = tObject({
+scheme.WebSocketRouteClosePageParams = tObject({
   code: tOptional(tNumber),
   reason: tOptional(tString),
+  wasClean: tBoolean,
 });
-scheme.WebSocketRouteCloseResult = tOptional(tObject({}));
+scheme.WebSocketRouteClosePageResult = tOptional(tObject({}));
+scheme.WebSocketRouteCloseServerParams = tObject({
+  code: tOptional(tNumber),
+  reason: tOptional(tString),
+  wasClean: tBoolean,
+});
+scheme.WebSocketRouteCloseServerResult = tOptional(tObject({}));
 scheme.ResourceTiming = tObject({
   startTime: tNumber,
   domainLookupStart: tNumber,
@@ -2278,6 +2431,17 @@ scheme.TracingTracingStartChunkParams = tObject({
 scheme.TracingTracingStartChunkResult = tObject({
   traceName: tString,
 });
+scheme.TracingTracingGroupParams = tObject({
+  name: tString,
+  location: tOptional(tObject({
+    file: tString,
+    line: tOptional(tNumber),
+    column: tOptional(tNumber),
+  })),
+});
+scheme.TracingTracingGroupResult = tOptional(tObject({}));
+scheme.TracingTracingGroupEndParams = tOptional(tObject({}));
+scheme.TracingTracingGroupEndResult = tOptional(tObject({}));
 scheme.TracingTracingStopChunkParams = tObject({
   mode: tEnum(['archive', 'discard', 'entries']),
 });
@@ -2350,7 +2514,7 @@ scheme.ElectronLaunchParams = tObject({
   args: tOptional(tArray(tString)),
   cwd: tOptional(tString),
   env: tOptional(tArray(tType('NameValue'))),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
   acceptDownloads: tOptional(tEnum(['accept', 'deny', 'internal-browser-default'])),
   bypassCSP: tOptional(tBoolean),
   colorScheme: tOptional(tEnum(['dark', 'light', 'no-preference', 'no-override'])),
@@ -2368,7 +2532,6 @@ scheme.ElectronLaunchParams = tObject({
   ignoreHTTPSErrors: tOptional(tBoolean),
   locale: tOptional(tString),
   offline: tOptional(tBoolean),
-  recordHar: tOptional(tType('RecordHarOptions')),
   recordVideo: tOptional(tObject({
     dir: tString,
     size: tOptional(tObject({
@@ -2379,6 +2542,8 @@ scheme.ElectronLaunchParams = tObject({
   strictSelectors: tOptional(tBoolean),
   timezoneId: tOptional(tString),
   tracesDir: tOptional(tString),
+  selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
+  testIdAttributeName: tOptional(tString),
 });
 scheme.ElectronLaunchResult = tObject({
   electronApplication: tChannel(['ElectronApplication']),
@@ -2433,10 +2598,6 @@ scheme.AndroidDevicesParams = tObject({
 scheme.AndroidDevicesResult = tObject({
   devices: tArray(tChannel(['AndroidDevice'])),
 });
-scheme.AndroidSetDefaultTimeoutNoReplyParams = tObject({
-  timeout: tNumber,
-});
-scheme.AndroidSetDefaultTimeoutNoReplyResult = tOptional(tObject({}));
 scheme.AndroidSocketInitializer = tOptional(tObject({}));
 scheme.AndroidSocketDataEvent = tObject({
   data: tBinary,
@@ -2460,74 +2621,74 @@ scheme.AndroidDeviceWebViewRemovedEvent = tObject({
   socketName: tString,
 });
 scheme.AndroidDeviceWaitParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   state: tOptional(tEnum(['gone'])),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.AndroidDeviceWaitResult = tOptional(tObject({}));
 scheme.AndroidDeviceFillParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   text: tString,
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.AndroidDeviceFillResult = tOptional(tObject({}));
 scheme.AndroidDeviceTapParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   duration: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.AndroidDeviceTapResult = tOptional(tObject({}));
 scheme.AndroidDeviceDragParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   dest: tType('Point'),
   speed: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.AndroidDeviceDragResult = tOptional(tObject({}));
 scheme.AndroidDeviceFlingParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   direction: tEnum(['up', 'down', 'left', 'right']),
   speed: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.AndroidDeviceFlingResult = tOptional(tObject({}));
 scheme.AndroidDeviceLongTapParams = tObject({
-  selector: tType('AndroidSelector'),
-  timeout: tOptional(tNumber),
+  androidSelector: tType('AndroidSelector'),
+  timeout: tNumber,
 });
 scheme.AndroidDeviceLongTapResult = tOptional(tObject({}));
 scheme.AndroidDevicePinchCloseParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   percent: tNumber,
   speed: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.AndroidDevicePinchCloseResult = tOptional(tObject({}));
 scheme.AndroidDevicePinchOpenParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   percent: tNumber,
   speed: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.AndroidDevicePinchOpenResult = tOptional(tObject({}));
 scheme.AndroidDeviceScrollParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   direction: tEnum(['up', 'down', 'left', 'right']),
   percent: tNumber,
   speed: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.AndroidDeviceScrollResult = tOptional(tObject({}));
 scheme.AndroidDeviceSwipeParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
   direction: tEnum(['up', 'down', 'left', 'right']),
   percent: tNumber,
   speed: tOptional(tNumber),
-  timeout: tOptional(tNumber),
+  timeout: tNumber,
 });
 scheme.AndroidDeviceSwipeResult = tOptional(tObject({}));
 scheme.AndroidDeviceInfoParams = tObject({
-  selector: tType('AndroidSelector'),
+  androidSelector: tType('AndroidSelector'),
 });
 scheme.AndroidDeviceInfoResult = tObject({
   info: tType('AndroidElementInfo'),
@@ -2603,6 +2764,7 @@ scheme.AndroidDeviceLaunchBrowserParams = tObject({
   reducedMotion: tOptional(tEnum(['reduce', 'no-preference', 'no-override'])),
   forcedColors: tOptional(tEnum(['active', 'none', 'no-override'])),
   acceptDownloads: tOptional(tEnum(['accept', 'deny', 'internal-browser-default'])),
+  contrast: tOptional(tEnum(['no-preference', 'more', 'no-override'])),
   baseURL: tOptional(tString),
   recordVideo: tOptional(tObject({
     dir: tString,
@@ -2611,9 +2773,10 @@ scheme.AndroidDeviceLaunchBrowserParams = tObject({
       height: tNumber,
     })),
   })),
-  recordHar: tOptional(tType('RecordHarOptions')),
   strictSelectors: tOptional(tBoolean),
   serviceWorkers: tOptional(tEnum(['allow', 'block'])),
+  selectorEngines: tOptional(tArray(tType('SelectorEngine'))),
+  testIdAttributeName: tOptional(tString),
   pkg: tOptional(tString),
   args: tOptional(tArray(tString)),
   proxy: tOptional(tObject({
@@ -2649,10 +2812,6 @@ scheme.AndroidDevicePushParams = tObject({
   mode: tOptional(tNumber),
 });
 scheme.AndroidDevicePushResult = tOptional(tObject({}));
-scheme.AndroidDeviceSetDefaultTimeoutNoReplyParams = tObject({
-  timeout: tNumber,
-});
-scheme.AndroidDeviceSetDefaultTimeoutNoReplyResult = tOptional(tObject({}));
 scheme.AndroidDeviceConnectToWebViewParams = tObject({
   socketName: tString,
 });
@@ -2677,10 +2836,10 @@ scheme.AndroidSelector = tObject({
   focusable: tOptional(tBoolean),
   focused: tOptional(tBoolean),
   hasChild: tOptional(tObject({
-    selector: tType('AndroidSelector'),
+    androidSelector: tType('AndroidSelector'),
   })),
   hasDescendant: tOptional(tObject({
-    selector: tType('AndroidSelector'),
+    androidSelector: tType('AndroidSelector'),
     maxDepth: tOptional(tNumber),
   })),
   longClickable: tOptional(tBoolean),

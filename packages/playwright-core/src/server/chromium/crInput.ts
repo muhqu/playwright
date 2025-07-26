@@ -15,14 +15,17 @@
  * limitations under the License.
  */
 
+import { isString } from '../../utils';
 import * as input from '../input';
+import { macEditingCommands } from '../macEditingCommands';
+import { toButtonsMask, toModifiersMask } from './crProtocolHelper';
+
 import type * as types from '../types';
 import type { CRSession } from './crConnection';
-import { macEditingCommands } from '../macEditingCommands';
-import { isString } from '../../utils';
 import type { DragManager } from './crDragDrop';
 import type { CRPage } from './crPage';
-import { toButtonsMask, toModifiersMask } from './crProtocolHelper';
+import type { Progress } from '../progress';
+
 
 export class RawKeyboardImpl implements input.RawKeyboard {
   constructor(
@@ -50,14 +53,15 @@ export class RawKeyboardImpl implements input.RawKeyboard {
     return commands.map(c => c.substring(0, c.length - 1));
   }
 
-  async keydown(modifiers: Set<types.KeyboardModifier>, code: string, keyCode: number, keyCodeWithoutLocation: number, key: string, location: number, autoRepeat: boolean, text: string | undefined): Promise<void> {
-    if (code === 'Escape' && await this._dragManger.cancelDrag())
+  async keydown(progress: Progress, modifiers: Set<types.KeyboardModifier>, keyName: string, description: input.KeyDescription, autoRepeat: boolean): Promise<void> {
+    const { code, key, location, text } = description;
+    if (code === 'Escape' && await progress.race(this._dragManger.cancelDrag()))
       return;
     const commands = this._commandsForCode(code, modifiers);
-    await this._client.send('Input.dispatchKeyEvent', {
+    await progress.race(this._client.send('Input.dispatchKeyEvent', {
       type: text ? 'keyDown' : 'rawKeyDown',
       modifiers: toModifiersMask(modifiers),
-      windowsVirtualKeyCode: keyCodeWithoutLocation,
+      windowsVirtualKeyCode: description.keyCodeWithoutLocation,
       code,
       commands,
       key,
@@ -66,22 +70,23 @@ export class RawKeyboardImpl implements input.RawKeyboard {
       autoRepeat,
       location,
       isKeypad: location === input.keypadLocation
-    });
+    }));
   }
 
-  async keyup(modifiers: Set<types.KeyboardModifier>, code: string, keyCode: number, keyCodeWithoutLocation: number, key: string, location: number): Promise<void> {
-    await this._client.send('Input.dispatchKeyEvent', {
+  async keyup(progress: Progress, modifiers: Set<types.KeyboardModifier>, keyName: string, description: input.KeyDescription): Promise<void> {
+    const { code, key, location } = description;
+    await progress.race(this._client.send('Input.dispatchKeyEvent', {
       type: 'keyUp',
       modifiers: toModifiersMask(modifiers),
       key,
-      windowsVirtualKeyCode: keyCodeWithoutLocation,
+      windowsVirtualKeyCode: description.keyCodeWithoutLocation,
       code,
       location
-    });
+    }));
   }
 
-  async sendText(text: string): Promise<void> {
-    await this._client.send('Input.insertText', { text });
+  async sendText(progress: Progress, text: string): Promise<void> {
+    await progress.race(this._client.send('Input.insertText', { text }));
   }
 }
 
@@ -96,45 +101,48 @@ export class RawMouseImpl implements input.RawMouse {
     this._dragManager = dragManager;
   }
 
-  async move(x: number, y: number, button: types.MouseButton | 'none', buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, forClick: boolean): Promise<void> {
+  async move(progress: Progress, x: number, y: number, button: types.MouseButton | 'none', buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, forClick: boolean): Promise<void> {
     const actualMove = async () => {
-      await this._client.send('Input.dispatchMouseEvent', {
+      await progress.race(this._client.send('Input.dispatchMouseEvent', {
         type: 'mouseMoved',
         button,
         buttons: toButtonsMask(buttons),
         x,
         y,
-        modifiers: toModifiersMask(modifiers)
-      });
+        modifiers: toModifiersMask(modifiers),
+        force: buttons.size > 0 ? 0.5 : 0,
+      }));
     };
     if (forClick) {
       // Avoid extra protocol calls related to drag and drop, because click relies on
       // move-down-up protocol commands being sent synchronously.
-      return actualMove();
+      await actualMove();
+      return;
     }
-    await this._dragManager.interceptDragCausedByMove(x, y, button, buttons, modifiers, actualMove);
+    await this._dragManager.interceptDragCausedByMove(progress, x, y, button, buttons, modifiers, actualMove);
   }
 
-  async down(x: number, y: number, button: types.MouseButton, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, clickCount: number): Promise<void> {
+  async down(progress: Progress, x: number, y: number, button: types.MouseButton, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, clickCount: number): Promise<void> {
     if (this._dragManager.isDragging())
       return;
-    await this._client.send('Input.dispatchMouseEvent', {
+    await progress.race(this._client.send('Input.dispatchMouseEvent', {
       type: 'mousePressed',
       button,
       buttons: toButtonsMask(buttons),
       x,
       y,
       modifiers: toModifiersMask(modifiers),
-      clickCount
-    });
+      clickCount,
+      force: buttons.size > 0 ? 0.5 : 0,
+    }));
   }
 
-  async up(x: number, y: number, button: types.MouseButton, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, clickCount: number): Promise<void> {
+  async up(progress: Progress, x: number, y: number, button: types.MouseButton, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, clickCount: number): Promise<void> {
     if (this._dragManager.isDragging()) {
-      await this._dragManager.drop(x, y, modifiers);
+      await this._dragManager.drop(progress, x, y, modifiers);
       return;
     }
-    await this._client.send('Input.dispatchMouseEvent', {
+    await progress.race(this._client.send('Input.dispatchMouseEvent', {
       type: 'mouseReleased',
       button,
       buttons: toButtonsMask(buttons),
@@ -142,18 +150,18 @@ export class RawMouseImpl implements input.RawMouse {
       y,
       modifiers: toModifiersMask(modifiers),
       clickCount
-    });
+    }));
   }
 
-  async wheel(x: number, y: number, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, deltaX: number, deltaY: number): Promise<void> {
-    await this._client.send('Input.dispatchMouseEvent', {
+  async wheel(progress: Progress, x: number, y: number, buttons: Set<types.MouseButton>, modifiers: Set<types.KeyboardModifier>, deltaX: number, deltaY: number): Promise<void> {
+    await progress.race(this._client.send('Input.dispatchMouseEvent', {
       type: 'mouseWheel',
       x,
       y,
       modifiers: toModifiersMask(modifiers),
       deltaX,
       deltaY,
-    });
+    }));
   }
 }
 
@@ -163,8 +171,8 @@ export class RawTouchscreenImpl implements input.RawTouchscreen {
   constructor(client: CRSession) {
     this._client = client;
   }
-  async tap(x: number, y: number, modifiers: Set<types.KeyboardModifier>) {
-    await Promise.all([
+  async tap(progress: Progress, x: number, y: number, modifiers: Set<types.KeyboardModifier>) {
+    await progress.race(Promise.all([
       this._client.send('Input.dispatchTouchEvent', {
         type: 'touchStart',
         modifiers: toModifiersMask(modifiers),
@@ -177,6 +185,6 @@ export class RawTouchscreenImpl implements input.RawTouchscreen {
         modifiers: toModifiersMask(modifiers),
         touchPoints: []
       }),
-    ]);
+    ]));
   }
 }

@@ -16,12 +16,12 @@
 
 import child_process from 'child_process';
 import { EventEmitter } from 'events';
+
+import { assert, timeOrigin } from 'playwright-core/lib/utils';
 import { debug } from 'playwright-core/lib/utilsBundle';
+
 import type { EnvProducedPayload, ProcessInitParams } from '../common/ipc';
 import type { ProtocolResponse } from '../common/process';
-import { execArgvWithExperimentalLoaderOptions } from '../transform/esmUtils';
-import { assert } from 'playwright-core/lib/utils';
-import { esmLoaderRegistered } from '../common/esmLoaderHost';
 
 export type ProcessExitData = {
   unexpectedly: boolean;
@@ -55,7 +55,6 @@ export class ProcessHost extends EventEmitter {
       env: {
         ...process.env,
         ...this._extraEnv,
-        ...(esmLoaderRegistered ? { PW_TS_ESM_LOADER_ON: '1' } : {}),
       },
       stdio: [
         'ignore',
@@ -63,7 +62,6 @@ export class ProcessHost extends EventEmitter {
         (options.onStdErr && !process.env.PW_RUNNER_DEBUG) ? 'pipe' : 'inherit',
         'ipc',
       ],
-      ...(process.env.PW_TS_ESM_LEGACY_LOADER_ON ? { execArgv: execArgvWithExperimentalLoaderOptions() } : {}),
     });
     this.process.on('exit', async (code, signal) => {
       this._processDidExit = true;
@@ -112,7 +110,8 @@ export class ProcessHost extends EventEmitter {
       return error;
 
     const processParams: ProcessInitParams = {
-      processName: this._processName
+      processName: this._processName,
+      timeOrigin: timeOrigin(),
     };
 
     this.send({

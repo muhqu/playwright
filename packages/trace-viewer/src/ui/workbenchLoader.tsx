@@ -14,14 +14,13 @@
   limitations under the License.
 */
 
-import { ToolbarButton } from '@web/components/toolbarButton';
 import * as React from 'react';
-import type { ContextEntry } from '../entries';
+import type { ContextEntry } from '../types/entries';
 import { MultiTraceModel } from './modelUtil';
 import './workbenchLoader.css';
-import { toggleTheme } from '@web/theme';
 import { Workbench } from './workbench';
 import { TestServerConnection, WebSocketTestServerTransport } from '@testIsomorphic/testServerConnection';
+import { SettingsToolbarButton } from './settingsToolbarButton';
 
 export const WorkbenchLoader: React.FunctionComponent<{
 }> = () => {
@@ -71,6 +70,23 @@ export const WorkbenchLoader: React.FunctionComponent<{
     };
     document.addEventListener('paste', listener);
     return () => document.removeEventListener('paste', listener);
+  });
+  React.useEffect(() => {
+    const listener = (e: MessageEvent) => {
+      const { method, params } = e.data;
+
+      if (method !== 'load' || !(params?.trace instanceof Blob))
+        return;
+
+      const traceFile = new File([params.trace], 'trace.zip', { type: 'application/zip' });
+      const dataTransfer = new DataTransfer();
+
+      dataTransfer.items.add(traceFile);
+
+      processTraceFiles(dataTransfer.files);
+    };
+    window.addEventListener('message', listener);
+    return () => window.removeEventListener('message', listener);
   });
 
   const handleDropEvent = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -131,6 +147,7 @@ export const WorkbenchLoader: React.FunctionComponent<{
           params.set('trace', url);
           if (uploadedTraceNames.length)
             params.set('traceFileName', uploadedTraceNames[i]);
+          params.set('limit', String(traceURLs.length));
           const response = await fetch(`contexts?${params.toString()}`);
           if (!response.ok) {
             if (!isServer)
@@ -160,12 +177,12 @@ export const WorkbenchLoader: React.FunctionComponent<{
       <div className='product'>Playwright</div>
       {model.title && <div className='title'>{model.title}</div>}
       <div className='spacer'></div>
-      <ToolbarButton icon='color-mode' title='Toggle color mode' toggled={false} onClick={() => toggleTheme()}></ToolbarButton>
+      <SettingsToolbarButton />
     </div>
     <div className='progress'>
       <div className='inner-progress' style={{ width: progress.total ? (100 * progress.done / progress.total) + '%' : 0 }}></div>
     </div>
-    <Workbench model={model} inert={showFileUploadDropArea} showSettings />
+    <Workbench model={model} inert={showFileUploadDropArea} />
     {fileForLocalModeError && <div className='drop-target'>
       <div>Trace Viewer uses Service Workers to show traces. To view trace:</div>
       <div style={{ paddingTop: 20 }}>

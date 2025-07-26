@@ -14,11 +14,10 @@
  * limitations under the License.
  */
 
+/* eslint-disable import/order */
+
 import json5Library from 'json5';
 export const json5 = json5Library;
-
-import * as piratesLibrary from 'pirates';
-export const pirates = piratesLibrary;
 
 import sourceMapSupportLibrary from 'source-map-support';
 export const sourceMapSupport = sourceMapSupportLibrary;
@@ -31,3 +30,6 @@ export const enquirer = enquirerLibrary;
 
 import chokidarLibrary from 'chokidar';
 export const chokidar = chokidarLibrary;
+
+import * as getEastAsianWidthLibrary from 'get-east-asian-width';
+export const getEastAsianWidth = getEastAsianWidthLibrary;

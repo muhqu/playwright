@@ -14,24 +14,24 @@
  * limitations under the License.
  */
 
+import { CSharpLanguageGenerator } from './csharp';
 import { JavaLanguageGenerator } from './java';
 import { JavaScriptLanguageGenerator } from './javascript';
 import { JsonlLanguageGenerator } from './jsonl';
-import { CSharpLanguageGenerator } from './csharp';
 import { PythonLanguageGenerator } from './python';
 
 export function languageSet() {
   return new Set([
-    new JavaLanguageGenerator('junit'),
-    new JavaLanguageGenerator('library'),
-    new JavaScriptLanguageGenerator(/* isPlaywrightTest */false),
     new JavaScriptLanguageGenerator(/* isPlaywrightTest */true),
+    new JavaScriptLanguageGenerator(/* isPlaywrightTest */false),
     new PythonLanguageGenerator(/* isAsync */false, /* isPytest */true),
     new PythonLanguageGenerator(/* isAsync */false, /* isPytest */false),
     new PythonLanguageGenerator(/* isAsync */true,  /* isPytest */false),
     new CSharpLanguageGenerator('mstest'),
     new CSharpLanguageGenerator('nunit'),
     new CSharpLanguageGenerator('library'),
+    new JavaLanguageGenerator('junit'),
+    new JavaLanguageGenerator('library'),
     new JsonlLanguageGenerator(),
   ]);
 }

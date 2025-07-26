@@ -96,6 +96,14 @@ test('should reuse context with trace if mode=when-possible', async ({ runInline
       import { test, expect } from '@playwright/test';
       let lastContextGuid;
 
+      test.beforeAll(async () => {
+        console.log('fromBeforeAll');
+      });
+
+      test.afterAll(async () => {
+        console.log('fromAfterAll');
+      });
+
       test('one', async ({ context, page }) => {
         lastContextGuid = context._guid;
         await page.setContent('<button>Click</button>');
@@ -113,20 +121,23 @@ test('should reuse context with trace if mode=when-possible', async ({ runInline
 
   expect(result.exitCode).toBe(0);
   expect(result.passed).toBe(2);
+  expect(result.output).toContain('fromBeforeAll');
+  expect(result.output).toContain('fromAfterAll');
 
   const trace1 = await parseTrace(testInfo.outputPath('test-results', 'reuse-one', 'trace.zip'));
   expect(trace1.actionTree).toEqual([
     'Before Hooks',
-    '  fixture: browser',
-    '    browserType.launch',
-    '  fixture: context',
-    '  fixture: page',
-    '    browserContext.newPage',
-    'page.setContent',
-    'page.click',
+    '  beforeAll hook',
+    '  Fixture "browser"',
+    '    Launch browser',
+    '  Fixture "context"',
+    '  Fixture "page"',
+    '    Create page',
+    'Set content',
+    'Click',
     'After Hooks',
-    '  fixture: page',
-    '  fixture: context',
+    '  Fixture "page"',
+    '  Fixture "context"',
   ]);
   expect(trace1.traceModel.storage().snapshotsForTest().length).toBeGreaterThan(0);
   expect(fs.existsSync(testInfo.outputPath('test-results', 'reuse-one', 'trace-1.zip'))).toBe(false);
@@ -134,15 +145,16 @@ test('should reuse context with trace if mode=when-possible', async ({ runInline
   const trace2 = await parseTrace(testInfo.outputPath('test-results', 'reuse-two', 'trace.zip'));
   expect(trace2.actionTree).toEqual([
     'Before Hooks',
-    '  fixture: context',
-    '  fixture: page',
-    'expect.toBe',
-    'page.setContent',
-    'page.fill',
-    'locator.click',
+    '  Fixture "context"',
+    '  Fixture "page"',
+    'Expect "toBe"',
+    'Set content',
+    'Fill "value"',
+    'Click',
     'After Hooks',
-    '  fixture: page',
-    '  fixture: context',
+    '  Fixture "page"',
+    '  Fixture "context"',
+    '  afterAll hook',
   ]);
   expect(trace2.traceModel.storage().snapshotsForTest().length).toBeGreaterThan(0);
 });
@@ -466,17 +478,17 @@ test('should reset tracing', async ({ runInlineTest }, testInfo) => {
   expect(result.passed).toBe(2);
 
   const trace1 = await parseTrace(traceFile1);
-  expect(trace1.apiNames).toEqual([
-    'page.setContent',
-    'page.click',
+  expect(trace1.titles).toEqual([
+    'Set content',
+    'Click',
   ]);
   expect(trace1.traceModel.storage().snapshotsForTest().length).toBeGreaterThan(0);
 
   const trace2 = await parseTrace(traceFile2);
-  expect(trace2.apiNames).toEqual([
-    'page.setContent',
-    'page.fill',
-    'locator.click',
+  expect(trace2.titles).toEqual([
+    'Set content',
+    'Fill "value"',
+    'Click',
   ]);
   expect(trace1.traceModel.storage().snapshotsForTest().length).toBeGreaterThan(0);
 });

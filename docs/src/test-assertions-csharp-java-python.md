@@ -17,6 +17,7 @@ title: "Assertions"
 | [`method: LocatorAssertions.toBeHidden`] | Element is not visible |
 | [`method: LocatorAssertions.toBeInViewport`] | Element intersects viewport |
 | [`method: LocatorAssertions.toBeVisible`] | Element is visible |
+| [`method: LocatorAssertions.toContainClass`] | Element has specified CSS classes |
 | [`method: LocatorAssertions.toContainText`] | Element contains text |
 | [`method: LocatorAssertions.toHaveAccessibleDescription`] | Element has a matching [accessible description](https://w3c.github.io/accname/#dfn-accessible-description) |
 | [`method: LocatorAssertions.toHaveAccessibleName`] | Element has a matching [accessible name](https://w3c.github.io/accname/#dfn-accessible-name) |
@@ -30,6 +31,7 @@ title: "Assertions"
 | [`method: LocatorAssertions.toHaveText`] | Element matches text |
 | [`method: LocatorAssertions.toHaveValue`] | Input has a value |
 | [`method: LocatorAssertions.toHaveValues`] | Select has options selected |
+| [`method: LocatorAssertions.toMatchAriaSnapshot`] | Element matches provided Aria snapshot |
 | [`method: PageAssertions.toHaveTitle`] | Page has a title |
 | [`method: PageAssertions.toHaveURL`] | Page has a URL |
 | [`method: APIResponseAssertions.toBeOK`] | Response has an OK status |
@@ -81,6 +83,7 @@ expect.set_options(timeout=10_000)
   values={[
     {label: 'MSTest', value: 'mstest'},
     {label: 'NUnit', value: 'nunit'},
+    {label: 'xUnit', value: 'xunit'},
   ]
 }>
 <TabItem value="nunit">
@@ -127,6 +130,24 @@ public class UnitTest1 : PageTest
 }
 ```
 
+</TabItem>
+<TabItem value="xunit">
+
+```csharp title="UnitTest1.cs"
+using Microsoft.Playwright;
+using Microsoft.Playwright.Xunit;
+
+namespace PlaywrightTests;
+
+public class UnitTest1: PageTest
+{
+    UnitTest1()
+    {
+        SetDefaultExpectTimeout(10_000);
+    }
+    // ...
+}
+```
 </TabItem>
 </Tabs>
 

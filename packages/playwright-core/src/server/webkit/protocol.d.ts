@@ -26,7 +26,6 @@ export module Protocol {
        * Equal to the corresponding `transition-property` CSS property. Should not be provided if `animationName` is also provided.
        */
       cssTransitionProperty?: string;
-      effect?: Effect;
       /**
        * Backtrace that was captured when this `WebAnimation` was created.
        */
@@ -104,10 +103,6 @@ export module Protocol {
      */
     export type effectChangedPayload = {
       animationId: AnimationId;
-      /**
-       * This is omitted when the effect is removed without a replacement.
-       */
-      effect?: Effect;
     }
     /**
      * Dispatched whenever the target of any effect of any animation is changed in any way.
@@ -156,6 +151,18 @@ export module Protocol {
     export type disableReturnValue = {
     }
     /**
+     * Gets the `Effect` for the animation with the given `AnimationId`.
+     */
+    export type requestEffectParameters = {
+      animationId: AnimationId;
+    }
+    export type requestEffectReturnValue = {
+      /**
+       * This is omitted when there is no effect.
+       */
+      effect?: Effect;
+    }
+    /**
      * Gets the `DOM.NodeId` for the target of the effect of the animation with the given `AnimationId`.
      */
     export type requestEffectTargetParameters = {
@@ -190,142 +197,6 @@ export module Protocol {
     export type stopTrackingParameters = {
     }
     export type stopTrackingReturnValue = {
-    }
-  }
-  
-  export module ApplicationCache {
-    /**
-     * Detailed application cache resource information.
-     */
-    export interface ApplicationCacheResource {
-      /**
-       * Resource url.
-       */
-      url: string;
-      /**
-       * Resource size.
-       */
-      size: number;
-      /**
-       * Resource type.
-       */
-      type: string;
-    }
-    /**
-     * Detailed application cache information.
-     */
-    export interface ApplicationCache {
-      /**
-       * Manifest URL.
-       */
-      manifestURL: string;
-      /**
-       * Application cache size.
-       */
-      size: number;
-      /**
-       * Application cache creation time.
-       */
-      creationTime: number;
-      /**
-       * Application cache update time.
-       */
-      updateTime: number;
-      /**
-       * Application cache resources.
-       */
-      resources: ApplicationCacheResource[];
-    }
-    /**
-     * Frame identifier - manifest URL pair.
-     */
-    export interface FrameWithManifest {
-      /**
-       * Frame identifier.
-       */
-      frameId: Network.FrameId;
-      /**
-       * Manifest URL.
-       */
-      manifestURL: string;
-      /**
-       * Application cache status.
-       */
-      status: number;
-    }
-    
-    export type applicationCacheStatusUpdatedPayload = {
-      /**
-       * Identifier of the frame containing document whose application cache updated status.
-       */
-      frameId: Network.FrameId;
-      /**
-       * Manifest URL.
-       */
-      manifestURL: string;
-      /**
-       * Updated application cache status.
-       */
-      status: number;
-    }
-    export type networkStateUpdatedPayload = {
-      isNowOnline: boolean;
-    }
-    
-    /**
-     * Returns array of frame identifiers with manifest urls for each frame containing a document associated with some application cache.
-     */
-    export type getFramesWithManifestsParameters = {
-    }
-    export type getFramesWithManifestsReturnValue = {
-      /**
-       * Array of frame identifiers with manifest urls for each frame containing a document associated with some application cache.
-       */
-      frameIds: FrameWithManifest[];
-    }
-    /**
-     * Enables application cache domain notifications.
-     */
-    export type enableParameters = {
-    }
-    export type enableReturnValue = {
-    }
-    /**
-     * Disable application cache domain notifications.
-     */
-    export type disableParameters = {
-    }
-    export type disableReturnValue = {
-    }
-    /**
-     * Returns manifest URL for document in the given frame.
-     */
-    export type getManifestForFrameParameters = {
-      /**
-       * Identifier of the frame containing document whose manifest is retrieved.
-       */
-      frameId: Network.FrameId;
-    }
-    export type getManifestForFrameReturnValue = {
-      /**
-       * Manifest URL for document in the given frame.
-       */
-      manifestURL: string;
-    }
-    /**
-     * Returns relevant application cache data for the document in given frame.
-     */
-    export type getApplicationCacheForFrameParameters = {
-      /**
-       * Identifier of the frame containing document whose application cache is retrieved.
-       */
-      frameId: Network.FrameId;
-    }
-    export type getApplicationCacheForFrameReturnValue = {
-      /**
-       * Relevant application cache data for the document in given frame.
-       */
-      applicationCache: ApplicationCache;
     }
   }
   
@@ -861,9 +732,9 @@ export module Protocol {
      */
     export interface Grouping {
       /**
-       * Source of the media query: "media-rule" if specified by a @media rule, "media-import-rule" if specified by an @import rule, "media-link-node" if specified by a "media" attribute in a linked style sheet's LINK tag, "media-style-node" if specified by a "media" attribute in an inline style sheet's STYLE tag, "supports-rule" if specified by an @supports rule, "layer-rule" if specified by an @layer rule, "container-rule" if specified by an @container rule, "style-rule" if specified by a CSSStyleRule containing the rule inside this grouping.
+       * Source of the media query: "media-rule" if specified by a @media rule, "media-import-rule" if specified by an @import rule, "media-link-node" if specified by a "media" attribute in a linked style sheet's LINK tag, "media-style-node" if specified by a "media" attribute in an inline style sheet's STYLE tag, "supports-rule" if specified by an @supports rule, "layer-rule" if specified by an @layer rule, "container-rule" if specified by an @container rule, "scope-rule" if specified by a @scope rule, "starting-style-rule" if specified by a @starting-style rule, "style-rule" if specified by a CSSStyleRule containing the rule inside this grouping.
        */
-      type: "media-rule"|"media-import-rule"|"media-link-node"|"media-style-node"|"supports-rule"|"layer-rule"|"layer-import-rule"|"container-rule"|"style-rule";
+      type: "media-rule"|"media-import-rule"|"media-link-node"|"media-style-node"|"supports-rule"|"layer-rule"|"layer-import-rule"|"container-rule"|"scope-rule"|"starting-style-rule"|"style-rule";
       /**
        * The CSS rule identifier for the `@rule` (absent for non-editable grouping rules) or the nesting parent style rule's selector. In CSSOM terms, this is the parent rule of either the previous Grouping for a CSSRule, or of a CSSRule itself.
        */
@@ -930,7 +801,7 @@ export module Protocol {
     /**
      * Relevant layout information about the node. Things not in this list are not important to Web Inspector.
      */
-    export type LayoutFlag = "rendered"|"scrollable"|"flex"|"grid"|"event";
+    export type LayoutFlag = "rendered"|"scrollable"|"flex"|"grid"|"event"|"slot-assigned"|"slot-filled";
     /**
      * The mode for how layout context type changes are handled (default: <code>Observed</code>). <code>Observed</code> limits handling to those nodes already known to the frontend by other means (generally, this means the node is a visible item in the Elements tab). <code>All</code> informs the frontend of all layout context type changes and all nodes with a known layout context are sent to the frontend.
      */
@@ -1565,7 +1436,7 @@ export module Protocol {
     /**
      * Channels for different types of log messages.
      */
-    export type ChannelSource = "xml"|"javascript"|"network"|"console-api"|"storage"|"appcache"|"rendering"|"css"|"security"|"content-blocker"|"media"|"mediasource"|"webrtc"|"itp-debug"|"private-click-measurement"|"payment-request"|"other";
+    export type ChannelSource = "xml"|"javascript"|"network"|"console-api"|"storage"|"rendering"|"css"|"accessibility"|"security"|"content-blocker"|"media"|"mediasource"|"webrtc"|"itp-debug"|"private-click-measurement"|"payment-request"|"other";
     /**
      * Level of logging.
      */
@@ -2300,6 +2171,8 @@ export module Protocol {
        * The native width of the video track in CSS pixels
        */
       width: number;
+      spatialVideoMetadata?: SpatialVideoMetadata;
+      videoProjectionMetadata?: VideoProjectionMetadata;
     }
     /**
      * WebCodecs VideoColorSpace
@@ -2339,26 +2212,41 @@ export module Protocol {
        */
       totalVideoFrames: number;
     }
+    /**
+     * A structure containing metadata describing spatial video properties.
+     */
+    export interface SpatialVideoMetadata {
+      width: number;
+      height: number;
+      /**
+       * The horizontal field-of-view measurement, in degrees
+       */
+      horizontalFOVDegrees: number;
+      /**
+       * The distance between the centers of the lenses in a camera system, in micrometers
+       */
+      baseline: number;
+      /**
+       * The relative shift of the left and right eye images, as a percentage.
+       */
+      disparityAdjustment: number;
+    }
+    /**
+     * Video Projection Metadata Kind.
+     */
+    export type VideoProjectionMetadataKind = "unknown"|"equirectangular"|"half-equirectangular"|"equi-angular-cubemap"|"parametric"|"pyramid"|"apple-immersive-video";
+    /**
+     * A structure containing metadata describing video projections.
+     */
+    export interface VideoProjectionMetadata {
+      /**
+       * The kind of video projection.
+       */
+      kind: VideoProjectionMetadataKind;
+    }
     export interface ViewportSize {
       width: number;
       height: number;
-    }
-    /**
-     * Data to construct File object.
-     */
-    export interface FilePayload {
-      /**
-       * File name.
-       */
-      name: string;
-      /**
-       * File type.
-       */
-      type: string;
-      /**
-       * Base64-encoded file data.
-       */
-      data: string;
     }
     
     /**
@@ -2617,6 +2505,27 @@ export module Protocol {
       depth?: number;
     }
     export type requestChildNodesReturnValue = {
+    }
+    /**
+     * Requests the <code>HTMLSlotElement</code> that the node with the given id is assigned to.
+     */
+    export type requestAssignedSlotParameters = {
+      nodeId: NodeId;
+    }
+    export type requestAssignedSlotReturnValue = {
+      /**
+       * Not provided if the given node is not assigned to a <code>HTMLSlotElement</code>.
+       */
+      slotElementId?: NodeId;
+    }
+    /**
+     * Requests the list of assigned nodes for the <code>HTMLSlotElement</code> with the given id.
+     */
+    export type requestAssignedNodesParameters = {
+      slotElementId: NodeId;
+    }
+    export type requestAssignedNodesReturnValue = {
+      assignedNodeIds: NodeId[];
     }
     /**
      * Executes <code>querySelector</code> on a given node.
@@ -3423,13 +3332,9 @@ might return multiple quads for inline nodes.
        */
       objectId: Runtime.RemoteObjectId;
       /**
-       * Files to set
-       */
-      files?: FilePayload[];
-      /**
        * File paths to set
        */
-      paths?: string[];
+      paths: string[];
     }
     export type setInputFilesReturnValue = {
     }
@@ -3641,81 +3546,6 @@ might return multiple quads for inline nodes.
       storageId: StorageId;
     }
     export type clearDOMStorageItemsReturnValue = {
-    }
-  }
-  
-  export module Database {
-    /**
-     * Unique identifier of Database object.
-     */
-    export type DatabaseId = string;
-    /**
-     * Database object.
-     */
-    export interface Database {
-      /**
-       * Database ID.
-       */
-      id: DatabaseId;
-      /**
-       * Database domain.
-       */
-      domain: string;
-      /**
-       * Database name.
-       */
-      name: string;
-      /**
-       * Database version.
-       */
-      version: string;
-    }
-    /**
-     * Database error.
-     */
-    export interface Error {
-      /**
-       * Error message.
-       */
-      message: string;
-      /**
-       * Error code.
-       */
-      code: number;
-    }
-    
-    export type addDatabasePayload = {
-      database: Database;
-    }
-    
-    /**
-     * Enables database tracking, database events will now be delivered to the client.
-     */
-    export type enableParameters = {
-    }
-    export type enableReturnValue = {
-    }
-    /**
-     * Disables database tracking, prevents database events from being sent to the client.
-     */
-    export type disableParameters = {
-    }
-    export type disableReturnValue = {
-    }
-    export type getDatabaseTableNamesParameters = {
-      databaseId: DatabaseId;
-    }
-    export type getDatabaseTableNamesReturnValue = {
-      tableNames: string[];
-    }
-    export type executeSQLParameters = {
-      databaseId: DatabaseId;
-      query: string;
-    }
-    export type executeSQLReturnValue = {
-      columnNames?: string[];
-      values?: any[];
-      sqlError?: Error;
     }
   }
   
@@ -4458,11 +4288,11 @@ might return multiple quads for inline nodes.
       url: string;
       shouldBlackbox: boolean;
       /**
-       * If <code>true</code>, <code>url</code> is case sensitive.
+       * If <code>true</code>, <code>url</code> is case sensitive. Defaults to true.
        */
       caseSensitive?: boolean;
       /**
-       * If <code>true</code>, treat <code>url</code> as regular expression.
+       * If <code>true</code>, treat <code>url</code> as regular expression. Defaults to false.
        */
       isRegex?: boolean;
       /**
@@ -6510,7 +6340,7 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     /**
      * List of settings able to be overridden by WebInspector.
      */
-    export type Setting = "PrivateClickMeasurementDebugModeEnabled"|"AuthorAndUserStylesEnabled"|"ICECandidateFilteringEnabled"|"ITPDebugModeEnabled"|"ImagesEnabled"|"MediaCaptureRequiresSecureConnection"|"MockCaptureDevicesEnabled"|"NeedsSiteSpecificQuirks"|"ScriptEnabled"|"ShowDebugBorders"|"ShowRepaintCounter"|"WebSecurityEnabled"|"DeviceOrientationEventEnabled"|"SpeechRecognitionEnabled"|"PointerLockEnabled"|"NotificationsEnabled"|"FullScreenEnabled"|"InputTypeMonthEnabled"|"InputTypeWeekEnabled";
+    export type Setting = "PrivateClickMeasurementDebugModeEnabled"|"AuthorAndUserStylesEnabled"|"ICECandidateFilteringEnabled"|"ITPDebugModeEnabled"|"ImagesEnabled"|"MediaCaptureRequiresSecureConnection"|"MockCaptureDevicesEnabled"|"NeedsSiteSpecificQuirks"|"ScriptEnabled"|"ShowDebugBorders"|"ShowRepaintCounter"|"WebSecurityEnabled"|"DeviceOrientationEventEnabled"|"SpeechRecognitionEnabled"|"PointerLockEnabled"|"NotificationsEnabled"|"FullScreenEnabled"|"InputTypeMonthEnabled"|"InputTypeWeekEnabled"|"FixedBackgroundsPaintRelativeToDocument";
     /**
      * A user preference that can be overriden by Web Inspector, like an accessibility preference.
      */
@@ -6689,6 +6519,10 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
        * Cookie Same-Site policy.
        */
       sameSite: CookieSameSitePolicy;
+      /**
+       * Cookie partition key. If null and partitioned property is true, then key must be computed.
+       */
+      partitionKey?: string;
     }
     /**
      * Accessibility Node
@@ -7073,6 +6907,10 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
      */
     export type setCookieParameters = {
       cookie: Cookie;
+      /**
+       * If true, then cookie's partition key should be set.
+       */
+      shouldPartition?: boolean;
     }
     export type setCookieReturnValue = {
     }
@@ -7772,6 +7610,18 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
       ignore: boolean;
     }
     export type setIgnoreCertificateErrorsReturnValue = {
+    }
+    /**
+     * Changes page zoom factor.
+     */
+    export type setPageZoomFactorParameters = {
+      /**
+       * Unique identifier of the page proxy.
+       */
+      pageProxyId: PageProxyID;
+      zoomFactor: number;
+    }
+    export type setPageZoomFactorReturnValue = {
     }
     /**
      * Returns all cookies in the given browser context.
@@ -9265,8 +9115,6 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "Animation.trackingStart": Animation.trackingStartPayload;
     "Animation.trackingUpdate": Animation.trackingUpdatePayload;
     "Animation.trackingComplete": Animation.trackingCompletePayload;
-    "ApplicationCache.applicationCacheStatusUpdated": ApplicationCache.applicationCacheStatusUpdatedPayload;
-    "ApplicationCache.networkStateUpdated": ApplicationCache.networkStateUpdatedPayload;
     "Browser.extensionsEnabled": Browser.extensionsEnabledPayload;
     "Browser.extensionsDisabled": Browser.extensionsDisabledPayload;
     "CPUProfiler.trackingStart": CPUProfiler.trackingStartPayload;
@@ -9316,7 +9164,6 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "DOMStorage.domStorageItemRemoved": DOMStorage.domStorageItemRemovedPayload;
     "DOMStorage.domStorageItemAdded": DOMStorage.domStorageItemAddedPayload;
     "DOMStorage.domStorageItemUpdated": DOMStorage.domStorageItemUpdatedPayload;
-    "Database.addDatabase": Database.addDatabasePayload;
     "Debugger.globalObjectCleared": Debugger.globalObjectClearedPayload;
     "Debugger.scriptParsed": Debugger.scriptParsedPayload;
     "Debugger.scriptFailedToParse": Debugger.scriptFailedToParsePayload;
@@ -9394,15 +9241,11 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
   export interface CommandParameters {
     "Animation.enable": Animation.enableParameters;
     "Animation.disable": Animation.disableParameters;
+    "Animation.requestEffect": Animation.requestEffectParameters;
     "Animation.requestEffectTarget": Animation.requestEffectTargetParameters;
     "Animation.resolveAnimation": Animation.resolveAnimationParameters;
     "Animation.startTracking": Animation.startTrackingParameters;
     "Animation.stopTracking": Animation.stopTrackingParameters;
-    "ApplicationCache.getFramesWithManifests": ApplicationCache.getFramesWithManifestsParameters;
-    "ApplicationCache.enable": ApplicationCache.enableParameters;
-    "ApplicationCache.disable": ApplicationCache.disableParameters;
-    "ApplicationCache.getManifestForFrame": ApplicationCache.getManifestForFrameParameters;
-    "ApplicationCache.getApplicationCacheForFrame": ApplicationCache.getApplicationCacheForFrameParameters;
     "Audit.setup": Audit.setupParameters;
     "Audit.run": Audit.runParameters;
     "Audit.teardown": Audit.teardownParameters;
@@ -9450,6 +9293,8 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "Console.setLoggingChannelLevel": Console.setLoggingChannelLevelParameters;
     "DOM.getDocument": DOM.getDocumentParameters;
     "DOM.requestChildNodes": DOM.requestChildNodesParameters;
+    "DOM.requestAssignedSlot": DOM.requestAssignedSlotParameters;
+    "DOM.requestAssignedNodes": DOM.requestAssignedNodesParameters;
     "DOM.querySelector": DOM.querySelectorParameters;
     "DOM.querySelectorAll": DOM.querySelectorAllParameters;
     "DOM.setNodeName": DOM.setNodeNameParameters;
@@ -9512,10 +9357,6 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "DOMStorage.setDOMStorageItem": DOMStorage.setDOMStorageItemParameters;
     "DOMStorage.removeDOMStorageItem": DOMStorage.removeDOMStorageItemParameters;
     "DOMStorage.clearDOMStorageItems": DOMStorage.clearDOMStorageItemsParameters;
-    "Database.enable": Database.enableParameters;
-    "Database.disable": Database.disableParameters;
-    "Database.getDatabaseTableNames": Database.getDatabaseTableNamesParameters;
-    "Database.executeSQL": Database.executeSQLParameters;
     "Debugger.enable": Debugger.enableParameters;
     "Debugger.disable": Debugger.disableParameters;
     "Debugger.setAsyncStackTraceDepth": Debugger.setAsyncStackTraceDepthParameters;
@@ -9650,6 +9491,7 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "Playwright.grantFileReadAccess": Playwright.grantFileReadAccessParameters;
     "Playwright.takePageScreenshot": Playwright.takePageScreenshotParameters;
     "Playwright.setIgnoreCertificateErrors": Playwright.setIgnoreCertificateErrorsParameters;
+    "Playwright.setPageZoomFactor": Playwright.setPageZoomFactorParameters;
     "Playwright.getAllCookies": Playwright.getAllCookiesParameters;
     "Playwright.setCookies": Playwright.setCookiesParameters;
     "Playwright.deleteAllCookies": Playwright.deleteAllCookiesParameters;
@@ -9706,15 +9548,11 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
   export interface CommandReturnValues {
     "Animation.enable": Animation.enableReturnValue;
     "Animation.disable": Animation.disableReturnValue;
+    "Animation.requestEffect": Animation.requestEffectReturnValue;
     "Animation.requestEffectTarget": Animation.requestEffectTargetReturnValue;
     "Animation.resolveAnimation": Animation.resolveAnimationReturnValue;
     "Animation.startTracking": Animation.startTrackingReturnValue;
     "Animation.stopTracking": Animation.stopTrackingReturnValue;
-    "ApplicationCache.getFramesWithManifests": ApplicationCache.getFramesWithManifestsReturnValue;
-    "ApplicationCache.enable": ApplicationCache.enableReturnValue;
-    "ApplicationCache.disable": ApplicationCache.disableReturnValue;
-    "ApplicationCache.getManifestForFrame": ApplicationCache.getManifestForFrameReturnValue;
-    "ApplicationCache.getApplicationCacheForFrame": ApplicationCache.getApplicationCacheForFrameReturnValue;
     "Audit.setup": Audit.setupReturnValue;
     "Audit.run": Audit.runReturnValue;
     "Audit.teardown": Audit.teardownReturnValue;
@@ -9762,6 +9600,8 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "Console.setLoggingChannelLevel": Console.setLoggingChannelLevelReturnValue;
     "DOM.getDocument": DOM.getDocumentReturnValue;
     "DOM.requestChildNodes": DOM.requestChildNodesReturnValue;
+    "DOM.requestAssignedSlot": DOM.requestAssignedSlotReturnValue;
+    "DOM.requestAssignedNodes": DOM.requestAssignedNodesReturnValue;
     "DOM.querySelector": DOM.querySelectorReturnValue;
     "DOM.querySelectorAll": DOM.querySelectorAllReturnValue;
     "DOM.setNodeName": DOM.setNodeNameReturnValue;
@@ -9824,10 +9664,6 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "DOMStorage.setDOMStorageItem": DOMStorage.setDOMStorageItemReturnValue;
     "DOMStorage.removeDOMStorageItem": DOMStorage.removeDOMStorageItemReturnValue;
     "DOMStorage.clearDOMStorageItems": DOMStorage.clearDOMStorageItemsReturnValue;
-    "Database.enable": Database.enableReturnValue;
-    "Database.disable": Database.disableReturnValue;
-    "Database.getDatabaseTableNames": Database.getDatabaseTableNamesReturnValue;
-    "Database.executeSQL": Database.executeSQLReturnValue;
     "Debugger.enable": Debugger.enableReturnValue;
     "Debugger.disable": Debugger.disableReturnValue;
     "Debugger.setAsyncStackTraceDepth": Debugger.setAsyncStackTraceDepthReturnValue;
@@ -9962,6 +9798,7 @@ the top of the viewport and Y increases as it proceeds towards the bottom of the
     "Playwright.grantFileReadAccess": Playwright.grantFileReadAccessReturnValue;
     "Playwright.takePageScreenshot": Playwright.takePageScreenshotReturnValue;
     "Playwright.setIgnoreCertificateErrors": Playwright.setIgnoreCertificateErrorsReturnValue;
+    "Playwright.setPageZoomFactor": Playwright.setPageZoomFactorReturnValue;
     "Playwright.getAllCookies": Playwright.getAllCookiesReturnValue;
     "Playwright.setCookies": Playwright.setCookiesReturnValue;
     "Playwright.deleteAllCookies": Playwright.deleteAllCookiesReturnValue;

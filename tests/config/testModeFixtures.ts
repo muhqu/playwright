@@ -17,11 +17,9 @@
 import { test } from '@playwright/test';
 import type { TestModeName } from './testMode';
 import { DefaultTestMode, DriverTestMode } from './testMode';
-import * as playwrightLibrary from 'playwright-core';
 
 export type TestModeWorkerOptions = {
   mode: TestModeName;
-  codegenMode: 'trace-events' | 'actions';
 };
 
 export type TestModeTestFixtures = {
@@ -43,13 +41,10 @@ export const testModeTest = test.extend<TestModeTestFixtures, TestModeWorkerOpti
       'service-grid': new DefaultTestMode(),
       'driver': new DriverTestMode(),
     }[mode];
-    require('playwright-core/lib/utils').setUnderTest();
     const playwright = await testMode.setup();
-    playwright._setSelectors(playwrightLibrary.selectors);
     await run(playwright);
     await testMode.teardown();
   }, { scope: 'worker' }],
-  codegenMode: ['actions', { scope: 'worker', option: true }],
 
   toImplInWorkerScope: [async ({ playwright }, use) => {
     await use((playwright as any)._toImpl);

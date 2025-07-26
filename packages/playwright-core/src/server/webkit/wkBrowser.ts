@@ -15,24 +15,25 @@
  * limitations under the License.
  */
 
-import type { BrowserOptions } from '../browser';
-import { Browser } from '../browser';
-import { assertBrowserContextIsNotOwned, BrowserContext, verifyGeolocation } from '../browserContext';
 import { assert } from '../../utils';
+import { Browser } from '../browser';
+import { BrowserContext, verifyGeolocation } from '../browserContext';
 import * as network from '../network';
-import type { InitScript, Page, PageDelegate } from '../page';
-import type { ConnectionTransport } from '../transport';
-import type * as types from '../types';
-import type * as channels from '@protocol/channels';
-import type { Protocol } from './protocol';
-import type { PageProxyMessageReceivedPayload } from './wkConnection';
-import { kPageProxyMessageReceived, WKConnection, WKSession } from './wkConnection';
+import { WKConnection, WKSession, kPageProxyMessageReceived } from './wkConnection';
 import { WKPage } from './wkPage';
 import { TargetClosedError } from '../errors';
-import type { SdkObject } from '../instrumentation';
 
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
-const BROWSER_VERSION = '18.0';
+import type { BrowserOptions } from '../browser';
+import type { SdkObject } from '../instrumentation';
+import type { InitScript, Page } from '../page';
+import type { ConnectionTransport } from '../transport';
+import type * as types from '../types';
+import type { Protocol } from './protocol';
+import type { PageProxyMessageReceivedPayload } from './wkConnection';
+import type * as channels from '@protocol/channels';
+
+const BROWSER_VERSION = '26.0';
+const DEFAULT_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${BROWSER_VERSION} Safari/605.1.15`;
 
 export class WKBrowser extends Browser {
   private readonly _connection: WKConnection;
@@ -120,15 +121,15 @@ export class WKBrowser extends Browser {
     // TODO: this is racy, because download might be unrelated any navigation, and we will
     // abort navigation that is still running. We should be able to fix this by
     // instrumenting policy decision start/proceed/cancel.
-    page._page._frameManager.frameAbortedNavigation(payload.frameId, 'Download is starting');
-    let originPage = page._initializedPage;
+    page._page.frameManager.frameAbortedNavigation(payload.frameId, 'Download is starting');
+    let originPage = page._page.initializedOrUndefined();
     // If it's a new window download, report it on the opener page.
     if (!originPage) {
       // Resume the page creation with an error. The page will automatically close right
       // after the download begins.
       page._firstNonInitialNavigationCommittedReject(new Error('Starting new page download'));
       if (page._opener)
-        originPage = page._opener._initializedPage;
+        originPage = page._opener._page.initializedOrUndefined();
     }
     if (!originPage)
       return;
@@ -174,8 +175,8 @@ export class WKBrowser extends Browser {
     const wkPage = this._wkPages.get(pageProxyId);
     if (!wkPage)
       return;
-    wkPage.didClose();
     this._wkPages.delete(pageProxyId);
+    wkPage.didClose();
   }
 
   _onPageProxyMessageReceived(event: PageProxyMessageReceivedPayload) {
@@ -229,7 +230,7 @@ export class WKBrowserContext extends BrowserContext {
     if (this._options.geolocation)
       promises.push(this.setGeolocation(this._options.geolocation));
     if (this._options.offline)
-      promises.push(this.setOffline(this._options.offline));
+      promises.push(this.doUpdateOffline());
     if (this._options.httpCredentials)
       promises.push(this.setHTTPCredentials(this._options.httpCredentials));
     await Promise.all(promises);
@@ -239,32 +240,52 @@ export class WKBrowserContext extends BrowserContext {
     return Array.from(this._browser._wkPages.values()).filter(wkPage => wkPage._browserContext === this);
   }
 
-  pages(): Page[] {
-    return this._wkPages().map(wkPage => wkPage._initializedPage).filter(pageOrNull => !!pageOrNull) as Page[];
+  override possiblyUninitializedPages(): Page[] {
+    return this._wkPages().map(wkPage => wkPage._page);
   }
 
-  async newPageDelegate(): Promise<PageDelegate> {
-    assertBrowserContextIsNotOwned(this);
+  override async doCreateNewPage(markAsServerSideOnly?: boolean): Promise<Page> {
     const { pageProxyId } = await this._browser._browserSession.send('Playwright.createPage', { browserContextId: this._browserContextId });
-    return this._browser._wkPages.get(pageProxyId)!;
+    const page = this._browser._wkPages.get(pageProxyId)!._page;
+    if (markAsServerSideOnly)
+      page.markAsServerSideOnly();
+    return page;
   }
 
   async doGetCookies(urls: string[]): Promise<channels.NetworkCookie[]> {
     const { cookies } = await this._browser._browserSession.send('Playwright.getAllCookies', { browserContextId: this._browserContextId });
     return network.filterCookies(cookies.map((c: channels.NetworkCookie) => {
-      const copy: any = { ... c };
-      copy.expires = c.expires === -1 ? -1 : c.expires / 1000;
-      delete copy.session;
-      return copy as channels.NetworkCookie;
+      const { name, value, domain, path, expires, httpOnly, secure, sameSite } = c;
+      const copy: channels.NetworkCookie = {
+        name,
+        value,
+        domain,
+        path,
+        expires: expires === -1 ? -1 : expires / 1000,
+        httpOnly,
+        secure,
+        sameSite,
+      };
+      return copy;
     }), urls);
   }
 
   async addCookies(cookies: channels.SetNetworkCookie[]) {
-    const cc = network.rewriteCookies(cookies).map(c => ({
-      ...c,
-      session: c.expires === -1 || c.expires === undefined,
-      expires: c.expires && c.expires !== -1 ? c.expires * 1000 : c.expires,
-    })) as Protocol.Playwright.SetCookieParam[];
+    const cc = network.rewriteCookies(cookies).map(c => {
+      const { name, value, domain, path, expires, httpOnly, secure, sameSite } = c;
+      const copy: Protocol.Playwright.SetCookieParam = {
+        name,
+        value,
+        domain: domain!,
+        path: path!,
+        expires: expires && expires !== -1 ? expires * 1000 : expires,
+        httpOnly,
+        secure,
+        sameSite,
+        session: expires === -1 || expires === undefined,
+      };
+      return copy;
+    });
     await this._browser._browserSession.send('Playwright.setCookies', { cookies: cc, browserContextId: this._browserContextId });
   }
 
@@ -273,11 +294,11 @@ export class WKBrowserContext extends BrowserContext {
   }
 
   async doGrantPermissions(origin: string, permissions: string[]) {
-    await Promise.all(this.pages().map(page => (page._delegate as WKPage)._grantPermissions(origin, permissions)));
+    await Promise.all(this.pages().map(page => (page.delegate as WKPage)._grantPermissions(origin, permissions)));
   }
 
   async doClearPermissions() {
-    await Promise.all(this.pages().map(page => (page._delegate as WKPage)._clearPermissions()));
+    await Promise.all(this.pages().map(page => (page.delegate as WKPage)._clearPermissions()));
   }
 
   async setGeolocation(geolocation?: types.Geolocation): Promise<void> {
@@ -287,43 +308,54 @@ export class WKBrowserContext extends BrowserContext {
     await this._browser._browserSession.send('Playwright.setGeolocationOverride', { browserContextId: this._browserContextId, geolocation: payload });
   }
 
-  async setExtraHTTPHeaders(headers: types.HeadersArray): Promise<void> {
-    this._options.extraHTTPHeaders = headers;
+  async doUpdateExtraHTTPHeaders(): Promise<void> {
     for (const page of this.pages())
-      await (page._delegate as WKPage).updateExtraHTTPHeaders();
+      await (page.delegate as WKPage).updateExtraHTTPHeaders();
   }
 
   async setUserAgent(userAgent: string | undefined): Promise<void> {
     this._options.userAgent = userAgent;
     for (const page of this.pages())
-      await (page._delegate as WKPage).updateUserAgent();
+      await (page.delegate as WKPage).updateUserAgent();
   }
 
-  async setOffline(offline: boolean): Promise<void> {
-    this._options.offline = offline;
+  async doUpdateOffline(): Promise<void> {
     for (const page of this.pages())
-      await (page._delegate as WKPage).updateOffline();
+      await (page.delegate as WKPage).updateOffline();
   }
 
   async doSetHTTPCredentials(httpCredentials?: types.Credentials): Promise<void> {
     this._options.httpCredentials = httpCredentials;
     for (const page of this.pages())
-      await (page._delegate as WKPage).updateHttpCredentials();
+      await (page.delegate as WKPage).updateHttpCredentials();
   }
 
   async doAddInitScript(initScript: InitScript) {
     for (const page of this.pages())
-      await (page._delegate as WKPage)._updateBootstrapScript();
+      await (page.delegate as WKPage)._updateBootstrapScript();
   }
 
-  async doRemoveNonInternalInitScripts() {
+  async doRemoveInitScripts(initScripts: InitScript[]) {
     for (const page of this.pages())
-      await (page._delegate as WKPage)._updateBootstrapScript();
+      await (page.delegate as WKPage)._updateBootstrapScript();
   }
 
   async doUpdateRequestInterception(): Promise<void> {
     for (const page of this.pages())
-      await (page._delegate as WKPage).updateRequestInterception();
+      await (page.delegate as WKPage).updateRequestInterception();
+  }
+
+  override async doUpdateDefaultViewport() {
+    // No-op, because each page resets its own viewport.
+  }
+
+  override async doUpdateDefaultEmulatedMedia() {
+    // No-op, because each page resets its own color scheme.
+  }
+
+  override async doExposePlaywrightBinding() {
+    for (const page of this.pages())
+      await (page.delegate as WKPage).exposePlaywrightBinding();
   }
 
   onClosePersistent() {}
@@ -350,7 +382,7 @@ export class WKBrowserContext extends BrowserContext {
     await this._browser._browserSession.send('Playwright.cancelDownload', { uuid });
   }
 
-  _validateEmulatedViewport(viewportSize?: types.Size | null) {
+  _validateEmulatedViewport(viewportSize: types.Size | undefined) {
     if (!viewportSize)
       return;
     if (process.platform === 'win32' && this._browser.options.headful && (viewportSize.width < 250 || viewportSize.height < 240))

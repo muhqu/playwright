@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
-import type { BrowserContextOptions } from '../../../types/types';
-import type * as types from '../types';
-import type { ActionInContext, Language, LanguageGenerator, LanguageGeneratorOptions } from './types';
 import { toClickOptionsForSourceCode, toKeyboardModifiers, toSignalMap } from './language';
 import { deviceDescriptors } from '../deviceDescriptors';
 import { JavaScriptFormatter } from './javascript';
-import { escapeWithQuotes, asLocator } from '../../utils';
+import { asLocator, escapeWithQuotes } from '../../utils';
+
+import type { BrowserContextOptions } from '../../../types/types';
+import type * as types from '../types';
+import type { Language, LanguageGenerator, LanguageGeneratorOptions } from './types';
+import type * as actions from '@recorder/actions';
 
 type JavaLanguageMode = 'library' | 'junit';
 
@@ -44,7 +46,7 @@ export class JavaLanguageGenerator implements LanguageGenerator {
     this._mode = mode;
   }
 
-  generateAction(actionInContext: ActionInContext): string {
+  generateAction(actionInContext: actions.ActionInContext): string {
     const action = actionInContext.action;
     const pageAlias = actionInContext.frame.pageAlias;
     const offset = this._mode === 'junit' ? 4 : 6;
@@ -90,7 +92,7 @@ export class JavaLanguageGenerator implements LanguageGenerator {
     return formatter.format();
   }
 
-  private _generateActionCall(subject: string, actionInContext: ActionInContext, inFrameLocator: boolean): string {
+  private _generateActionCall(subject: string, actionInContext: actions.ActionInContext, inFrameLocator: boolean): string {
     const action = actionInContext.action;
     switch (action.name) {
       case 'openPage':
@@ -121,7 +123,7 @@ export class JavaLanguageGenerator implements LanguageGenerator {
       case 'navigate':
         return `${subject}.navigate(${quote(action.url)});`;
       case 'select':
-        return `${subject}.${this._asLocator(action.selector, inFrameLocator)}.selectOption(${formatSelectOption(action.options.length > 1 ? action.options : action.options[0])});`;
+        return `${subject}.${this._asLocator(action.selector, inFrameLocator)}.selectOption(${formatSelectOption(action.options.length === 1 ? action.options[0] : action.options)});`;
       case 'assertText':
         return `assertThat(${subject}.${this._asLocator(action.selector, inFrameLocator)}).${action.substring ? 'containsText' : 'hasText'}(${quote(action.text)});`;
       case 'assertChecked':
@@ -132,6 +134,8 @@ export class JavaLanguageGenerator implements LanguageGenerator {
         const assertion = action.value ? `hasValue(${quote(action.value)})` : `isEmpty()`;
         return `assertThat(${subject}.${this._asLocator(action.selector, inFrameLocator)}).${assertion};`;
       }
+      case 'assertSnapshot':
+        return `assertThat(${subject}.${this._asLocator(action.selector, inFrameLocator)}).matchesAriaSnapshot(${quote(action.ariaSnapshot)});`;
     }
   }
 
@@ -147,26 +151,38 @@ export class JavaLanguageGenerator implements LanguageGenerator {
       import com.microsoft.playwright.Page;
       import com.microsoft.playwright.options.*;
 
-      import org.junit.jupiter.api.*;
+      ${options.contextOptions.recordHar ? `import java.nio.file.Paths;\n` : ''}import org.junit.jupiter.api.*;
       import static com.microsoft.playwright.assertions.PlaywrightAssertions.*;
 
       @UsePlaywright
       public class TestExample {
         @Test
         void test(Page page) {`);
+      if (options.contextOptions.recordHar) {
+        const url = options.contextOptions.recordHar.urlFilter;
+        const recordHarOptions = typeof url === 'string' ? `, new Page.RouteFromHAROptions()
+            .setUrl(${quote(url)})` : '';
+        formatter.add(`          page.routeFromHAR(Paths.get(${quote(options.contextOptions.recordHar.path)})${recordHarOptions});`);
+      }
       return formatter.format();
     }
     formatter.add(`
     import com.microsoft.playwright.*;
     import com.microsoft.playwright.options.*;
     import static com.microsoft.playwright.assertions.PlaywrightAssertions.assertThat;
-    import java.util.*;
+    ${options.contextOptions.recordHar ? `import java.nio.file.Paths;\n` : ''}import java.util.*;
 
     public class Example {
       public static void main(String[] args) {
         try (Playwright playwright = Playwright.create()) {
           Browser browser = playwright.${options.browserName}().launch(${formatLaunchOptions(options.launchOptions)});
           BrowserContext context = browser.newContext(${formatContextOptions(options.contextOptions, options.deviceName)});`);
+    if (options.contextOptions.recordHar) {
+      const url = options.contextOptions.recordHar.urlFilter;
+      const recordHarOptions = typeof url === 'string' ? `, new BrowserContext.RouteFromHAROptions()
+          .setUrl(${quote(url)})` : '';
+      formatter.add(`          context.routeFromHAR(Paths.get(${quote(options.contextOptions.recordHar.path)})${recordHarOptions});`);
+    }
     return formatter.format();
   }
 
@@ -237,16 +253,6 @@ function formatContextOptions(contextOptions: BrowserContextOptions, deviceName:
     lines.push(`  .setLocale(${quote(options.locale)})`);
   if (options.proxy)
     lines.push(`  .setProxy(new Proxy(${quote(options.proxy.server)}))`);
-  if (options.recordHar?.content)
-    lines.push(`  .setRecordHarContent(HarContentPolicy.${options.recordHar?.content.toUpperCase()})`);
-  if (options.recordHar?.mode)
-    lines.push(`  .setRecordHarMode(HarMode.${options.recordHar?.mode.toUpperCase()})`);
-  if (options.recordHar?.omitContent)
-    lines.push(`  .setRecordHarOmitContent(true)`);
-  if (options.recordHar?.path)
-    lines.push(`  .setRecordHarPath(Paths.get(${quote(options.recordHar.path)}))`);
-  if (options.recordHar?.urlFilter)
-    lines.push(`  .setRecordHarUrlFilter(${quote(options.recordHar.urlFilter as string)})`);
   if (options.serviceWorkers)
     lines.push(`  .setServiceWorkers(ServiceWorkerPolicy.${options.serviceWorkers.toUpperCase()})`);
   if (options.storageState)

@@ -35,7 +35,6 @@ export class RunServer implements PlaywrightServer {
       command,
       env: {
         ...process.env,
-        PWTEST_UNDER_TEST: '1',
         ...env,
       },
     });
@@ -69,6 +68,7 @@ export type RemoteServerOptions = {
   inCluster?: boolean;
   url?: string;
   startStopAndRunHttp?: boolean;
+  sharedBrowser?: boolean;
 };
 
 export class RemoteServer implements PlaywrightServer {
@@ -80,29 +80,31 @@ export class RemoteServer implements PlaywrightServer {
   _browser: Browser | undefined;
   _wsEndpoint!: string;
 
-  async _start(childProcess: CommonFixtures['childProcess'], browserType: BrowserType, remoteServerOptions: RemoteServerOptions = {}) {
+  async _start(childProcess: CommonFixtures['childProcess'], browserType: BrowserType, channel: string, remoteServerOptions: RemoteServerOptions = {}) {
     this._browserType = browserType;
-    const browserOptions = (browserType as any)._defaultLaunchOptions;
+    const browserOptions = (browserType as any)._playwright._defaultLaunchOptions;
     // Copy options to prevent a large JSON string when launching subprocess.
     // Otherwise, we get `Error: spawn ENAMETOOLONG` on Windows.
     const launchOptions: Parameters<BrowserType['launchServer']>[0] = {
       args: browserOptions.args,
       headless: browserOptions.headless,
       channel: browserOptions.channel,
+      executablePath: browserOptions.executablePath,
       handleSIGINT: true,
       handleSIGTERM: true,
       handleSIGHUP: true,
-      executablePath: browserOptions.channel ? undefined : browserOptions.executablePath || browserType.executablePath(),
       logger: undefined,
     };
+    if (remoteServerOptions.sharedBrowser)
+      (launchOptions as any)._sharedBrowser = true;
     const options = {
       browserTypeName: browserType.name(),
+      channel,
       launchOptions,
       ...remoteServerOptions,
     };
     this._process = childProcess({
       command: ['node', path.join(__dirname, 'remote-server-impl.js'), JSON.stringify(options)],
-      env: { ...process.env, PWTEST_UNDER_TEST: '1' },
     });
 
     let index = 0;

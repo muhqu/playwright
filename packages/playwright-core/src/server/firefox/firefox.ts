@@ -15,19 +15,22 @@
  * limitations under the License.
  */
 
-import * as os from 'os';
+import os from 'os';
 import path from 'path';
+
 import { FFBrowser } from './ffBrowser';
 import { kBrowserCloseMessageId } from './ffConnection';
+import { wrapInASCIIBox } from '../utils/ascii';
 import { BrowserType, kNoXServerRunningError } from '../browserType';
-import { BrowserReadyState } from '../browserType';
-import type { Env } from '../../utils/processLauncher';
-import type { ConnectionTransport } from '../transport';
+import { ManualPromise } from '../../utils/isomorphic/manualPromise';
+
 import type { BrowserOptions } from '../browser';
-import type * as types from '../types';
-import { wrapInASCIIBox } from '../../utils';
 import type { SdkObject } from '../instrumentation';
+import type { Env } from '../utils/processLauncher';
 import type { ProtocolError } from '../protocolError';
+import type { ConnectionTransport } from '../transport';
+import type * as types from '../types';
+import type { RecentLogsCollector } from '../utils/debugLogger';
 
 export class Firefox extends BrowserType {
   constructor(parent: SdkObject) {
@@ -49,7 +52,7 @@ export class Firefox extends BrowserType {
     return error;
   }
 
-  override amendEnvironment(env: Env, userDataDir: string, executable: string, browserArguments: string[]): Env {
+  override amendEnvironment(env: Env): Env {
     if (!path.isAbsolute(os.homedir()))
       throw new Error(`Cannot launch Firefox with relative home directory. Did you set ${os.platform() === 'win32' ? 'USERPROFILE' : 'HOME'} to a relative path?`);
     if (os.platform() === 'linux') {
@@ -90,15 +93,12 @@ export class Firefox extends BrowserType {
     return firefoxArguments;
   }
 
-  override readyState(options: types.LaunchOptions): BrowserReadyState | undefined {
-    return new JugglerReadyState();
+  override waitForReadyState(options: types.LaunchOptions, browserLogsCollector: RecentLogsCollector): Promise<{ wsEndpoint?: string }> {
+    const result = new ManualPromise<{ wsEndpoint?: string }>();
+    browserLogsCollector.onMessage(message => {
+      if (message.includes('Juggler listening to the pipe'))
+        result.resolve({});
+    });
+    return result;
   }
 }
-
-class JugglerReadyState extends BrowserReadyState {
-  override onBrowserOutput(message: string): void {
-    if (message.includes('Juggler listening to the pipe'))
-      this._wsEndpoint.resolve(undefined);
-  }
-}
-

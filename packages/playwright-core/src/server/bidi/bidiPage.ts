@@ -14,42 +14,43 @@
  * limitations under the License.
  */
 
-import type { RegisteredListener } from '../../utils/eventsHelper';
-import { eventsHelper } from '../../utils/eventsHelper';
 import { assert } from '../../utils';
-import type * as accessibility from '../accessibility';
-import * as dom from '../dom';
+import { eventsHelper } from '../utils/eventsHelper';
 import * as dialog from '../dialog';
-import type * as frames from '../frames';
+import * as dom from '../dom';
 import { Page } from '../page';
+import { BidiExecutionContext, createHandle } from './bidiExecutionContext';
+import { RawKeyboardImpl, RawMouseImpl, RawTouchscreenImpl } from './bidiInput';
+import { BidiNetworkManager } from './bidiNetworkManager';
+import { BidiPDF } from './bidiPdf';
+import * as bidi from './third_party/bidiProtocol';
+
+import type { RegisteredListener } from '../utils/eventsHelper';
+import type * as accessibility from '../accessibility';
+import type * as frames from '../frames';
 import type { InitScript, PageDelegate } from '../page';
 import type { Progress } from '../progress';
 import type * as types from '../types';
 import type { BidiBrowserContext } from './bidiBrowser';
 import type { BidiSession } from './bidiConnection';
-import { RawKeyboardImpl, RawMouseImpl, RawTouchscreenImpl } from './bidiInput';
-import * as bidi from './third_party/bidiProtocol';
-import { BidiExecutionContext } from './bidiExecutionContext';
-import { BidiNetworkManager } from './bidiNetworkManager';
-import { BrowserContext } from '../browserContext';
+import type * as channels from '@protocol/channels';
 
 const UTILITY_WORLD_NAME = '__playwright_utility_world__';
-const kPlaywrightBindingChannel = 'playwrightChannel';
+export const kPlaywrightBindingChannel = 'playwrightChannel';
 
 export class BidiPage implements PageDelegate {
   readonly rawMouse: RawMouseImpl;
   readonly rawKeyboard: RawKeyboardImpl;
   readonly rawTouchscreen: RawTouchscreenImpl;
   readonly _page: Page;
-  private readonly _pagePromise: Promise<Page | Error>;
   readonly _session: BidiSession;
   readonly _opener: BidiPage | null;
-  private readonly _realmToContext: Map<string, dom.FrameExecutionContext>;
+  readonly _realmToContext: Map<string, dom.FrameExecutionContext>;
   private _sessionListeners: RegisteredListener[] = [];
   readonly _browserContext: BidiBrowserContext;
   readonly _networkManager: BidiNetworkManager;
-  _initializedPage: Page | null = null;
-  private _initScriptIds: string[] = [];
+  private readonly _pdf: BidiPDF;
+  private _initScriptIds = new Map<InitScript, string>();
 
   constructor(browserContext: BidiBrowserContext, bidiSession: BidiSession, opener: BidiPage | null) {
     this._session = bidiSession;
@@ -61,6 +62,7 @@ export class BidiPage implements PageDelegate {
     this._page = new Page(this, browserContext);
     this._browserContext = browserContext;
     this._networkManager = new BidiNetworkManager(this._session, this._page, this._onNavigationResponseStarted.bind(this));
+    this._pdf = new BidiPDF(this._session);
     this._page.on(Page.Events.FrameDetached, (frame: frames.Frame) => this._removeContextsForFrame(frame, false));
     this._sessionListeners = [
       eventsHelper.addEventListener(bidiSession, 'script.realmCreated', this._onRealmCreated.bind(this)),
@@ -77,16 +79,10 @@ export class BidiPage implements PageDelegate {
     ];
 
     // Initialize main frame.
-    this._pagePromise = this._initialize().finally(async () => {
-      await this._page.initOpener(this._opener);
-    }).then(() => {
-      this._initializedPage = this._page;
-      this._page.reportAsNew();
-      return this._page;
-    }).catch(e => {
-      this._page.reportAsNew(e);
-      return e;
-    });
+    // TODO: Wait for first execution context to be created and maybe about:blank navigated.
+    this._initialize().then(
+        () => this._page.reportAsNew(this._opener?._page),
+        error => this._page.reportAsNew(this._opener?._page, error));
   }
 
   private async _initialize() {
@@ -95,18 +91,13 @@ export class BidiPage implements PageDelegate {
     await Promise.all([
       this.updateHttpCredentials(),
       this.updateRequestInterception(),
-      this._updateViewport(),
-      this._installMainBinding(),
-      this._addAllInitScripts(),
+      // If the page is created by the Playwright client's call, some initialization
+      // may be pending. Wait for it to complete before reporting the page as new.
+      //
+      // TODO: ideally we'd wait only for the commands that created this page, but currently
+      // there is no way in Bidi to track which command created this page.
+      this._browserContext.waitForBlockingPageCreations(),
     ]);
-  }
-
-  private async _addAllInitScripts() {
-    return Promise.all(this._page.allInitScripts().map(initScript => this.addInitScript(initScript)));
-  }
-
-  potentiallyUninitializedPage(): Page {
-    return this._page;
   }
 
   didClose() {
@@ -115,13 +106,8 @@ export class BidiPage implements PageDelegate {
     this._page._didClose();
   }
 
-  async pageOrError(): Promise<Page | Error> {
-    // TODO: Wait for first execution context to be created and maybe about:blank navigated.
-    return this._pagePromise;
-  }
-
   private _onFrameAttached(frameId: string, parentFrameId: string | null): frames.Frame {
-    return this._page._frameManager.frameAttached(frameId, parentFrameId);
+    return this._page.frameManager.frameAttached(frameId, parentFrameId);
   }
 
   private _removeContextsForFrame(frame: frames.Frame, notifyFrame: boolean) {
@@ -139,10 +125,9 @@ export class BidiPage implements PageDelegate {
       return;
     if (realmInfo.type !== 'window')
       return;
-    const frame = this._page._frameManager.frame(realmInfo.context);
+    const frame = this._page.frameManager.frame(realmInfo.context);
     if (!frame)
       return;
-    const delegate = new BidiExecutionContext(this._session, realmInfo);
     let worldName: types.World;
     if (!realmInfo.sandbox) {
       worldName = 'main';
@@ -153,8 +138,8 @@ export class BidiPage implements PageDelegate {
     } else {
       return;
     }
+    const delegate = new BidiExecutionContext(this._session, realmInfo);
     const context = new dom.FrameExecutionContext(delegate, frame, worldName);
-    (context as any)[contextDelegateSymbol] = delegate;
     frame._contextCreated(worldName, context);
     this._realmToContext.set(realmInfo.realm, context);
   }
@@ -191,51 +176,51 @@ export class BidiPage implements PageDelegate {
 
   private _onNavigationStarted(params: bidi.BrowsingContext.NavigationInfo) {
     const frameId = params.context;
-    this._page._frameManager.frameRequestedNavigation(frameId, params.navigation!);
+    this._page.frameManager.frameRequestedNavigation(frameId, params.navigation!);
 
     const url = params.url.toLowerCase();
     if (url.startsWith('file:') || url.startsWith('data:') || url === 'about:blank') {
       // Navigation to file urls doesn't emit network events, so we fire 'commit' event right when navigation is started.
       // Doing it in domcontentload would be too late as we'd clear frame tree.
-      const frame = this._page._frameManager.frame(frameId)!;
+      const frame = this._page.frameManager.frame(frameId)!;
       if (frame)
-        this._page._frameManager.frameCommittedNewDocumentNavigation(frameId, params.url, '', params.navigation!, /* initial */ false);
+        this._page.frameManager.frameCommittedNewDocumentNavigation(frameId, params.url, '', params.navigation!, /* initial */ false);
     }
   }
 
   // TODO: there is no separate event for committed navigation, so we approximate it with responseStarted.
   private _onNavigationResponseStarted(params: bidi.Network.ResponseStartedParameters) {
     const frameId = params.context!;
-    const frame = this._page._frameManager.frame(frameId);
+    const frame = this._page.frameManager.frame(frameId);
     assert(frame);
-    this._page._frameManager.frameCommittedNewDocumentNavigation(frameId, params.response.url, '', params.navigation!, /* initial */ false);
+    this._page.frameManager.frameCommittedNewDocumentNavigation(frameId, params.response.url, '', params.navigation!, /* initial */ false);
     // if (!initial)
     //   this._firstNonInitialNavigationCommittedFulfill();
   }
 
   private _onDomContentLoaded(params: bidi.BrowsingContext.NavigationInfo) {
     const frameId = params.context;
-    this._page._frameManager.frameLifecycleEvent(frameId, 'domcontentloaded');
+    this._page.frameManager.frameLifecycleEvent(frameId, 'domcontentloaded');
   }
 
   private _onLoad(params: bidi.BrowsingContext.NavigationInfo) {
-    this._page._frameManager.frameLifecycleEvent(params.context, 'load');
+    this._page.frameManager.frameLifecycleEvent(params.context, 'load');
   }
 
   private _onNavigationAborted(params: bidi.BrowsingContext.NavigationInfo) {
-    this._page._frameManager.frameAbortedNavigation(params.context, 'Navigation aborted', params.navigation || undefined);
+    this._page.frameManager.frameAbortedNavigation(params.context, 'Navigation aborted', params.navigation || undefined);
   }
 
   private _onNavigationFailed(params: bidi.BrowsingContext.NavigationInfo) {
-    this._page._frameManager.frameAbortedNavigation(params.context, 'Navigation failed', params.navigation || undefined);
+    this._page.frameManager.frameAbortedNavigation(params.context, 'Navigation failed', params.navigation || undefined);
   }
 
   private _onFragmentNavigated(params: bidi.BrowsingContext.NavigationInfo) {
-    this._page._frameManager.frameCommittedSameDocumentNavigation(params.context, params.url);
+    this._page.frameManager.frameCommittedSameDocumentNavigation(params.context, params.url);
   }
 
   private _onUserPromptOpened(event: bidi.BrowsingContext.UserPromptOpenedParameters) {
-    this._page.emitOnContext(BrowserContext.Events.Dialog, new dialog.Dialog(
+    this._page.browserContext.dialogManager.dialogDidOpen(new dialog.Dialog(
         this._page,
         event.type as dialog.DialogType,
         event.message,
@@ -254,7 +239,7 @@ export class BidiPage implements PageDelegate {
       return;
     const callFrame = params.stackTrace?.callFrames[0];
     const location = callFrame ?? { url: '', lineNumber: 1, columnNumber: 1 };
-    this._page._addConsoleMessage(entry.method, entry.args.map(arg => context.createHandle({ objectId: (arg as any).handle, ...arg })), location, params.text || undefined);
+    this._page.addConsoleMessage(entry.method, entry.args.map(arg => createHandle(context, arg)), location, params.text || undefined);
   }
 
   async navigateFrame(frame: frames.Frame, url: string, referrer: string | undefined): Promise<frames.GotoResult> {
@@ -271,22 +256,21 @@ export class BidiPage implements PageDelegate {
   async updateEmulateMedia(): Promise<void> {
   }
 
-  async updateEmulatedViewportSize(): Promise<void> {
-    await this._updateViewport();
-  }
-
   async updateUserAgent(): Promise<void> {
   }
 
   async bringToFront(): Promise<void> {
+    await this._session.send('browsingContext.activate', {
+      context: this._session.sessionId,
+    });
   }
 
-  private async _updateViewport(): Promise<void> {
+  async updateEmulatedViewportSize(): Promise<void> {
     const options = this._browserContext._options;
-    const deviceSize = this._page.emulatedSize();
-    if (deviceSize === null)
+    const emulatedSize = this._page.emulatedSize();
+    if (!emulatedSize)
       return;
-    const viewportSize = deviceSize.viewport;
+    const viewportSize = emulatedSize.viewport;
     await this._session.send('browsingContext.setViewport', {
       context: this._session.sessionId,
       viewport: {
@@ -333,39 +317,14 @@ export class BidiPage implements PageDelegate {
     }).then(() => true).catch(() => false);
   }
 
-  async forceGarbageCollection(): Promise<void> {
+  async requestGC(): Promise<void> {
     throw new Error('Method not implemented.');
-  }
-
-  // TODO: consider calling this only when bindings are added.
-  private async _installMainBinding() {
-    const functionDeclaration = addMainBinding.toString();
-    const args: bidi.Script.ChannelValue[] = [{
-      type: 'channel',
-      value: {
-        channel: kPlaywrightBindingChannel,
-        ownership: bidi.Script.ResultOwnership.Root,
-      }
-    }];
-    const promises = [];
-    promises.push(this._session.send('script.addPreloadScript', {
-      functionDeclaration,
-      arguments: args,
-    }));
-    promises.push(this._session.send('script.callFunction', {
-      functionDeclaration,
-      arguments: args,
-      target: toBidiExecutionContext(await this._page.mainFrame()._mainContext())._target,
-      awaitPromise: false,
-      userActivation: false,
-    }));
-    await Promise.all(promises);
   }
 
   private async _onScriptMessage(event: bidi.Script.MessageParameters) {
     if (event.channel !== kPlaywrightBindingChannel)
       return;
-    const pageOrError = await this.pageOrError();
+    const pageOrError = await this._page.waitForInitializedOrError();
     if (pageOrError instanceof Error)
       return;
     const context = this._realmToContext.get(event.source.realm);
@@ -373,7 +332,7 @@ export class BidiPage implements PageDelegate {
       return;
     if (event.data.type !== 'string')
       return;
-    await this._page._onBindingCalled(event.data.value, context);
+    await this._page.onBindingCalled(event.data.value, context);
   }
 
   async addInitScript(initScript: InitScript): Promise<void> {
@@ -383,14 +342,18 @@ export class BidiPage implements PageDelegate {
       // TODO: push to iframes?
       contexts: [this._session.sessionId],
     });
-    if (!initScript.internal)
-      this._initScriptIds.push(script);
+    this._initScriptIds.set(initScript, script);
   }
 
-  async removeNonInternalInitScripts() {
-    const promises = this._initScriptIds.map(script => this._session.send('script.removePreloadScript', { script }));
-    this._initScriptIds = [];
-    await Promise.all(promises);
+  async removeInitScripts(initScripts: InitScript[]): Promise<void> {
+    const ids: string[] = [];
+    for (const script of initScripts) {
+      const id = this._initScriptIds.get(script);
+      if (id)
+        ids.push(id);
+      this._initScriptIds.delete(script);
+    }
+    await Promise.all(ids.map(script => this._session.send('script.removePreloadScript', { script })));
   }
 
   async closePage(runBeforeUnload: boolean): Promise<void> {
@@ -405,38 +368,39 @@ export class BidiPage implements PageDelegate {
 
   async takeScreenshot(progress: Progress, format: string, documentRect: types.Rect | undefined, viewportRect: types.Rect | undefined, quality: number | undefined, fitsViewport: boolean, scale: 'css' | 'device'): Promise<Buffer> {
     const rect = (documentRect || viewportRect)!;
-    const { data } = await this._session.send('browsingContext.captureScreenshot', {
+    const { data } = await progress.race(this._session.send('browsingContext.captureScreenshot', {
       context: this._session.sessionId,
       format: {
         type: `image/${format === 'png' ? 'png' : 'jpeg'}`,
-        quality: quality || 80,
+        quality: quality ? quality / 100 : 0.8,
       },
       origin: documentRect ? 'document' : 'viewport',
       clip: {
         type: 'box',
         ...rect,
       }
-    });
+    }));
     return Buffer.from(data, 'base64');
   }
 
   async getContentFrame(handle: dom.ElementHandle): Promise<frames.Frame | null> {
     const executionContext = toBidiExecutionContext(handle._context);
-    const contentWindow = await executionContext.rawCallFunction('e => e.contentWindow', { handle: handle._objectId });
-    if (contentWindow.type === 'window') {
-      const frameId = contentWindow.value.context;
-      const result = this._page._frameManager.frame(frameId);
-      return result;
-    }
-    return null;
+    const frameId = await executionContext.contentFrameIdForFrame(handle);
+    if (!frameId)
+      return null;
+    return this._page.frameManager.frame(frameId);
   }
 
   async getOwnerFrame(handle: dom.ElementHandle): Promise<string | null> {
-    throw new Error('Method not implemented.');
-  }
-
-  isElementHandle(remoteObject: bidi.Script.RemoteValue): boolean {
-    return remoteObject.type === 'node';
+    // TODO: switch to utility world?
+    const windowHandle = await handle.evaluateHandle(node => {
+      const doc = node.ownerDocument ?? node as Document;
+      return doc.defaultView;
+    });
+    if (!windowHandle)
+      return null;
+    const executionContext = toBidiExecutionContext(handle._context);
+    return executionContext.frameIdForWindowHandle(windowHandle);
   }
 
   async getBoundingBox(handle: dom.ElementHandle): Promise<types.Rect | null> {
@@ -523,26 +487,20 @@ export class BidiPage implements PageDelegate {
     return quads as types.Quad[];
   }
 
-  async setInputFiles(handle: dom.ElementHandle<HTMLInputElement>, files: types.FilePayload[]): Promise<void> {
-    throw new Error('Method not implemented.');
-  }
-
   async setInputFilePaths(handle: dom.ElementHandle<HTMLInputElement>, paths: string[]): Promise<void> {
-    throw new Error('Method not implemented.');
+    const fromContext = toBidiExecutionContext(handle._context);
+    await this._session.send('input.setFiles', {
+      context: this._session.sessionId,
+      element: await fromContext.nodeIdForElementHandle(handle),
+      files: paths,
+    });
   }
 
   async adoptElementHandle<T extends Node>(handle: dom.ElementHandle<T>, to: dom.FrameExecutionContext): Promise<dom.ElementHandle<T>> {
     const fromContext = toBidiExecutionContext(handle._context);
-    const shared = await fromContext.rawCallFunction('x => x',  { handle: handle._objectId });
-    // TODO: store sharedId in the handle.
-    if (!('sharedId' in shared))
-      throw new Error('Element is not a node');
-    const sharedId = shared.sharedId!;
+    const nodeId = await fromContext.nodeIdForElementHandle(handle);
     const executionContext = toBidiExecutionContext(to);
-    const result = await executionContext.rawCallFunction('x => x',  { sharedId });
-    if ('handle' in result)
-      return to.createHandle({ objectId: result.handle!, ...result }) as dom.ElementHandle<T>;
-    throw new Error('Failed to adopt element handle.');
+    return await executionContext.remoteObjectForNodeId(to, nodeId) as dom.ElementHandle<T>;
   }
 
   async getAccessibilityTree(needle?: dom.ElementHandle): Promise<{tree: accessibility.AXNode, needle: accessibility.AXNode | null}> {
@@ -552,7 +510,11 @@ export class BidiPage implements PageDelegate {
   async inputActionEpilogue(): Promise<void> {
   }
 
-  async resetForReuse(): Promise<void> {
+  async resetForReuse(progress: Progress): Promise<void> {
+  }
+
+  async pdf(options: channels.PagePdfParams): Promise<Buffer> {
+    return this._pdf.generate(options);
   }
 
   async getFrameElement(frame: frames.Frame): Promise<dom.ElementHandle> {
@@ -584,12 +546,6 @@ export class BidiPage implements PageDelegate {
   }
 }
 
-function addMainBinding(callback: (arg: any) => void) {
-  (globalThis as any)['__playwright__binding__'] = callback;
-}
-
 function toBidiExecutionContext(executionContext: dom.FrameExecutionContext): BidiExecutionContext {
-  return (executionContext as any)[contextDelegateSymbol] as BidiExecutionContext;
+  return executionContext.delegate as BidiExecutionContext;
 }
-
-const contextDelegateSymbol = Symbol('delegate');

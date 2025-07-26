@@ -15,29 +15,32 @@
  */
 
 import fs from 'fs';
-import type { StackFrame } from '@protocol/channels';
-import util from 'util';
 import path from 'path';
 import url from 'url';
-import { debug, mime, minimatch, parseStackTraceLine } from 'playwright-core/lib/utilsBundle';
-import { formatCallLog } from 'playwright-core/lib/utils';
-import type { TestInfoError } from './../types/test';
+import util from 'util';
+
+import { parseStackFrame, sanitizeForFilePath, calculateSha1, isRegExp, isString, stringifyStackFrames, escapeWithQuotes } from 'playwright-core/lib/utils';
+import { colors, debug, mime, minimatch } from 'playwright-core/lib/utilsBundle';
+
 import type { Location } from './../types/testReporter';
-import { calculateSha1, isRegExp, isString, sanitizeForFilePath, stringifyStackFrames } from 'playwright-core/lib/utils';
+import type { TestInfoErrorImpl } from './common/ipc';
+import type { StackFrame } from '@protocol/channels';
 import type { RawStack } from 'playwright-core/lib/utils';
 
 const PLAYWRIGHT_TEST_PATH = path.join(__dirname, '..');
 const PLAYWRIGHT_CORE_PATH = path.dirname(require.resolve('playwright-core/package.json'));
 
-export function filterStackTrace(e: Error): { message: string, stack: string } {
+export function filterStackTrace(e: Error): { message: string, stack: string, cause?: ReturnType<typeof filterStackTrace> } {
   const name = e.name ? e.name + ': ' : '';
+  const cause = e.cause instanceof Error ? filterStackTrace(e.cause) : undefined;
   if (process.env.PWDEBUGIMPL)
-    return { message: name + e.message, stack: e.stack || '' };
+    return { message: name + e.message, stack: e.stack || '', cause };
 
   const stackLines = stringifyStackFrames(filteredStackTrace(e.stack?.split('\n') || []));
   return {
     message: name + e.message,
-    stack: `${name}${e.message}${stackLines.map(line => '\n' + line).join('')}`
+    stack: `${name}${e.message}${stackLines.map(line => '\n' + line).join('')}`,
+    cause,
   };
 }
 
@@ -52,7 +55,7 @@ export function filterStackFile(file: string) {
 export function filteredStackTrace(rawStack: RawStack): StackFrame[] {
   const frames: StackFrame[] = [];
   for (const line of rawStack) {
-    const frame = parseStackTraceLine(line);
+    const frame = parseStackFrame(line, path.sep, !!process.env.PWDEBUGIMPL);
     if (!frame || !frame.file)
       continue;
     if (!filterStackFile(frame.file))
@@ -62,7 +65,7 @@ export function filteredStackTrace(rawStack: RawStack): StackFrame[] {
   return frames;
 }
 
-export function serializeError(error: Error | any): TestInfoError {
+export function serializeError(error: Error | any): TestInfoErrorImpl {
   if (error instanceof Error)
     return filterStackTrace(error);
   return {
@@ -144,7 +147,7 @@ export function createTitleMatcher(patterns: RegExp | RegExp[]): Matcher {
   };
 }
 
-export function mergeObjects<A extends object, B extends object, C extends object>(a: A | undefined | void, b: B | undefined | void, c: B | undefined | void): A & B & C {
+export function mergeObjects<A extends object, B extends object, C extends object>(a: A | undefined | void, b: B | undefined | void, c: C | undefined | void): A & B & C {
   const result = { ...a } as any;
   for (const x of [b, c].filter(Boolean)) {
     for (const [name, value] of Object.entries(x as any)) {
@@ -203,8 +206,8 @@ export function addSuffixToFilePath(filePath: string, suffix: string): string {
   return base + suffix + ext;
 }
 
-export function sanitizeFilePathBeforeExtension(filePath: string): string {
-  const ext = path.extname(filePath);
+export function sanitizeFilePathBeforeExtension(filePath: string, ext?: string): string {
+  ext ??= path.extname(filePath);
   const base = filePath.substring(0, filePath.length - ext.length);
   return sanitizeForFilePath(base) + ext;
 }
@@ -221,7 +224,14 @@ export function getContainedPath(parentPath: string, subPath: string = ''): stri
 
 export const debugTest = debug('pw:test');
 
-export const callLogText = formatCallLog;
+export const callLogText = (log: string[] | undefined) => {
+  if (!log || !log.some(l => !!l))
+    return '';
+  return `
+Call log:
+${colors.dim(log.join('\n'))}
+`;
+};
 
 const folderToPackageJsonPath = new Map<string, string>();
 
@@ -255,7 +265,7 @@ export function resolveReporterOutputPath(defaultValue: string, configDir: strin
   return path.resolve(basePath, defaultValue);
 }
 
-export async function normalizeAndSaveAttachment(outputPath: string, name: string, options: { path?: string, body?: string | Buffer, contentType?: string } = {}): Promise<{ name: string; path?: string | undefined; body?: Buffer | undefined; contentType: string; }> {
+export async function normalizeAndSaveAttachment(outputPath: string, name: string, options: { path?: string, body?: string | Buffer, contentType?: string } = {}): Promise<{ name: string; path?: string; body?: Buffer; contentType: string; }> {
   if (options.path === undefined && options.body === undefined)
     return { name, contentType: 'text/plain' };
   if ((options.path !== undefined ? 1 : 0) + (options.body !== undefined ? 1 : 0) !== 1)
@@ -381,6 +391,15 @@ function fileExists(resolved: string) {
   return fs.statSync(resolved, { throwIfNoEntry: false })?.isFile();
 }
 
+export async function fileExistsAsync(resolved: string) {
+  try {
+    const stat = await fs.promises.stat(resolved);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
 function dirExists(resolved: string) {
   return fs.statSync(resolved, { throwIfNoEntry: false })?.isDirectory();
 }
@@ -393,5 +412,30 @@ export async function removeDirAndLogToConsole(dir: string) {
     console.log(`Removing ${await fs.promises.realpath(dir)}`);
     await fs.promises.rm(dir, { recursive: true, force: true });
   } catch {
+  }
+}
+
+export const ansiRegex = new RegExp('([\\u001B\\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~])))', 'g');
+export function stripAnsiEscapes(str: string): string {
+  return str.replace(ansiRegex, '');
+}
+
+export type TestStepCategory = 'expect' | 'fixture' | 'hook' | 'pw:api' | 'test.step' | 'test.attach';
+
+export function stepTitle(category: TestStepCategory, title: string): string {
+  switch (category) {
+    case 'fixture':
+      return `Fixture ${escapeWithQuotes(title, '"')}`;
+    case 'expect':
+      return `Expect ${escapeWithQuotes(title, '"')}`;
+    case 'test.step':
+      return title;
+    case 'test.attach':
+      return `Attach ${escapeWithQuotes(title, '"')}`;
+    case 'hook':
+    case 'pw:api':
+      return title;
+    default:
+      return `[${category}] ${title}`;
   }
 }

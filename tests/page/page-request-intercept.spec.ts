@@ -218,7 +218,7 @@ it('should support timeout option in route.fetch', async ({ page, server, isElec
   });
   await page.route('**/*', async route => {
     const error = await route.fetch({ timeout: 1000 }).catch(e => e);
-    expect(error.message).toContain(`Request timed out after 1000ms`);
+    expect(error.message).toContain(`route.fetch: Timeout 1000ms exceeded`);
   });
   const error = await page.goto(server.PREFIX + '/slow', { timeout: 2000 }).catch(e => e);
   expect(error.message).toContain(`Timeout 2000ms exceeded`);
@@ -317,4 +317,26 @@ it('request.postData is not null when fetching FormData with a Blob', {
   const postData = await postDataPromise;
   expect(postData).toContain('Content-Disposition: form-data; name="file"; filename="blob"');
   expect(postData).toContain('\r\nhello\r\n');
+});
+
+it('should abort favicon requests if interception is enabled', async ({ page, server, browserName }) => {
+  let requestCount = 0;
+  server.setRoute('/favicon.ico', (req, res) => {
+    ++requestCount;
+    res.setHeader('content-type', 'text/plain');
+    res.end('my content');
+  });
+  // Intercept all requests.
+  await page.route('**/*', async route => {
+    await route.fulfill({
+      status: 200,
+      body: 'Hello, world!',
+    });
+  });
+  await page.goto(server.EMPTY_PAGE);
+  const response = await page.evaluate(() => fetch('/favicon.ico').then(r => r.text()).catch(e => 'load failed'));
+  expect(response).toBe('load failed');
+  // Browsers can send favicon requests in the background.
+  await new Promise(f => setTimeout(f, 1000));
+  expect(requestCount).toBe(0);
 });

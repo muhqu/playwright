@@ -14,22 +14,23 @@
  * limitations under the License.
  */
 
+import { assert, calculateSha1, monotonicTime } from '../../utils';
+import { getPlaywrightVersion, isTextualMimeType, urlMatches } from '../../utils';
+import { eventsHelper } from '../utils/eventsHelper';
+import { ManualPromise } from '../../utils/isomorphic/manualPromise';
+import { mime } from '../../utilsBundle';
 import { BrowserContext } from '../browserContext';
-import type { APIRequestEvent, APIRequestFinishedEvent } from '../fetch';
 import { APIRequestContext } from '../fetch';
+import { Frame } from '../frames';
 import { helper } from '../helper';
 import * as network from '../network';
-import type { Worker } from '../page';
+
+import type { RegisteredListener } from '../utils/eventsHelper';
+import type { APIRequestEvent, APIRequestFinishedEvent } from '../fetch';
 import type { Page } from '../page';
-import type * as har from '@trace/har';
-import { assert, calculateSha1, monotonicTime } from '../../utils';
-import type { RegisteredListener } from '../../utils/eventsHelper';
-import { eventsHelper } from '../../utils/eventsHelper';
-import { mime } from '../../utilsBundle';
-import { ManualPromise } from '../../utils/manualPromise';
-import { getPlaywrightVersion, isTextualMimeType, urlMatches } from '../../utils';
-import { Frame } from '../frames';
+import type { Worker } from '../page';
 import type { HeadersArray, LifecycleEvent } from '../types';
+import type * as har from '@trace/har';
 
 const FALLBACK_HTTP_VERSION = 'HTTP/1.1';
 
@@ -105,6 +106,8 @@ export class HarTracer {
           eventsHelper.addEventListener(this._context, BrowserContext.Events.RequestFulfilled, request => this._onRequestFulfilled(request)),
           eventsHelper.addEventListener(this._context, BrowserContext.Events.RequestContinued, request => this._onRequestContinued(request)),
       );
+      for (const page of this._context.pages())
+        this._createPageEntryIfNeeded(page);
     }
   }
 
@@ -257,7 +260,7 @@ export class HarTracer {
     const page = request.frame()?._page;
     if (this._page && page !== this._page)
       return;
-    const url = network.parsedURL(request.url());
+    const url = network.parseURL(request.url());
     if (!url)
       return;
 
@@ -289,7 +292,7 @@ export class HarTracer {
   }
 
   private _recordRequestOverrides(harEntry: har.Entry, request: network.Request) {
-    if (!request._hasOverrides() || !this._options.recordRequestOverrides)
+    if (!request.overrides() || !this._options.recordRequestOverrides)
       return;
     harEntry.request.method = request.method();
     harEntry.request.url = request.url();
@@ -452,7 +455,7 @@ export class HarTracer {
       status: response.status(),
       statusText: response.statusText(),
       httpVersion: response.httpVersion(),
-      // These are bad values that will be overwritten bellow.
+      // These are bad values that will be overwritten below.
       cookies: [],
       headers: [],
       content: {

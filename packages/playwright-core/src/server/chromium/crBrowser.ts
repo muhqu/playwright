@@ -15,28 +15,30 @@
  * limitations under the License.
  */
 
-import type { BrowserOptions } from '../browser';
 import path from 'path';
+
+import { assert } from '../../utils/isomorphic/assert';
+import { createGuid } from '../utils/crypto';
+import { Artifact } from '../artifact';
 import { Browser } from '../browser';
-import { assertBrowserContextIsNotOwned, BrowserContext, verifyGeolocation } from '../browserContext';
-import { assert, createGuid } from '../../utils';
-import * as network from '../network';
-import type { InitScript, PageDelegate, Worker } from '../page';
-import { Page } from '../page';
+import { BrowserContext, verifyGeolocation } from '../browserContext';
 import { Frame } from '../frames';
-import type { Dialog } from '../dialog';
-import type { ConnectionTransport } from '../transport';
-import type * as types from '../types';
-import type * as channels from '@protocol/channels';
-import type { CRSession, CDPSession } from './crConnection';
-import { ConnectionEvents, CRConnection } from './crConnection';
+import * as network from '../network';
+import { Page } from '../page';
+import { CRConnection, ConnectionEvents } from './crConnection';
 import { CRPage } from './crPage';
 import { saveProtocolStream } from './crProtocolHelper';
-import type { Protocol } from './protocol';
-import type { CRDevTools } from './crDevTools';
 import { CRServiceWorker } from './crServiceWorker';
+
+import type { InitScript, Worker } from '../page';
+import type { ConnectionTransport } from '../transport';
+import type * as types from '../types';
+import type { CDPSession, CRSession } from './crConnection';
+import type { CRDevTools } from './crDevTools';
+import type { Protocol } from './protocol';
+import type { BrowserOptions } from '../browser';
 import type { SdkObject } from '../instrumentation';
-import { Artifact } from '../artifact';
+import type * as channels from '@protocol/channels';
 
 export class CRBrowser extends Browser {
   readonly _connection: CRConnection;
@@ -56,7 +58,7 @@ export class CRBrowser extends Browser {
   static async connect(parent: SdkObject, transport: ConnectionTransport, options: BrowserOptions, devtools?: CRDevTools): Promise<CRBrowser> {
     // Make a copy in case we need to update `headful` property below.
     options = { ...options };
-    const connection = new CRConnection(transport, options.protocolLogger, options.browserLogsCollector);
+    const connection = new CRConnection(parent, transport, options.protocolLogger, options.browserLogsCollector);
     const browser = new CRBrowser(parent, connection, options);
     browser._devtools = devtools;
     if (browser.isClank())
@@ -146,7 +148,7 @@ export class CRBrowser extends Browser {
   }
 
   async _waitForAllPagesToBeInitialized() {
-    await Promise.all([...this._crPages.values()].map(page => page.pageOrError()));
+    await Promise.all([...this._crPages.values()].map(crPage => crPage._page.waitForInitializedOrError()));
   }
 
   _onAttachedToTarget({ targetInfo, sessionId, waitingForDebugger }: Protocol.Target.attachedToTargetPayload) {
@@ -242,7 +244,7 @@ export class CRBrowser extends Browser {
 
   private _findOwningPage(frameId: string) {
     for (const crPage of this._crPages.values()) {
-      const frame = crPage._page._frameManager.frame(frameId);
+      const frame = crPage._page.frameManager.frame(frameId);
       if (frame)
         return crPage;
     }
@@ -259,10 +261,10 @@ export class CRBrowser extends Browser {
     }
     page.willBeginDownload();
 
-    let originPage = page._initializedPage;
+    let originPage = page._page.initializedOrUndefined();
     // If it's a new window download, report it on the opener page.
     if (!originPage && page._opener)
-      originPage = page._opener._initializedPage;
+      originPage = page._opener._page.initializedOrUndefined();
     if (!originPage)
       return;
     this._downloadCreated(originPage, payload.guid, payload.url, payload.suggestedFilename);
@@ -285,7 +287,7 @@ export class CRBrowser extends Browser {
 
   async startTracing(page?: Page, options: { screenshots?: boolean; categories?: string[]; } = {}) {
     assert(!this._tracingRecording, 'Cannot start recording trace while already recording trace.');
-    this._tracingClient = page ? (page._delegate as CRPage)._mainFrameSession._client : this._session;
+    this._tracingClient = page ? (page.delegate as CRPage)._mainFrameSession._client : this._session;
 
     const defaultCategories = [
       '-*', 'devtools.timeline', 'v8.execute', 'disabled-by-default-devtools.timeline',
@@ -364,52 +366,71 @@ export class CRBrowserContext extends BrowserContext {
     return [...this._browser._crPages.values()].filter(crPage => crPage._browserContext === this);
   }
 
-  pages(): Page[] {
-    return this._crPages().map(crPage => crPage._initializedPage).filter(Boolean) as Page[];
+  override possiblyUninitializedPages(): Page[] {
+    return this._crPages().map(crPage => crPage._page);
   }
 
-  async newPageDelegate(): Promise<PageDelegate> {
-    assertBrowserContextIsNotOwned(this);
-
-    const oldKeys = this._browser.isClank() ? new Set(this._browser._crPages.keys()) : undefined;
-
-    let { targetId } = await this._browser._session.send('Target.createTarget', { url: 'about:blank', browserContextId: this._browserContextId });
-
-    if (oldKeys) {
-      // Chrome for Android returns tab ids (1, 2, 3, 4, 5) instead of content target ids here, work around it via the
-      // heuristic assuming that there is only one page created at a time.
-      const newKeys = new Set(this._browser._crPages.keys());
-      // Remove old keys.
-      for (const key of oldKeys)
-        newKeys.delete(key);
-      // Remove potential concurrent popups.
-      for (const key of newKeys) {
-        const page = this._browser._crPages.get(key)!;
-        if (page._opener)
-          newKeys.delete(key);
-      }
-      assert(newKeys.size === 1);
-      [targetId] = [...newKeys];
-    }
-    return this._browser._crPages.get(targetId)!;
+  override async doCreateNewPage(markAsServerSideOnly?: boolean): Promise<Page> {
+    const { targetId } = await this._browser._session.send('Target.createTarget', { url: 'about:blank', browserContextId: this._browserContextId });
+    const page = this._browser._crPages.get(targetId)!._page;
+    if (markAsServerSideOnly)
+      page.markAsServerSideOnly();
+    return page;
   }
 
   async doGetCookies(urls: string[]): Promise<channels.NetworkCookie[]> {
     const { cookies } = await this._browser._session.send('Storage.getCookies', { browserContextId: this._browserContextId });
     return network.filterCookies(cookies.map(c => {
-      const copy: any = { sameSite: 'Lax', ...c };
-      delete copy.size;
-      delete copy.priority;
-      delete copy.session;
-      delete copy.sameParty;
-      delete copy.sourceScheme;
-      delete copy.sourcePort;
-      return copy as channels.NetworkCookie;
+      const { name, value, domain, path, expires, httpOnly, secure, sameSite } = c;
+      const copy: channels.NetworkCookie = {
+        name,
+        value,
+        domain,
+        path,
+        expires,
+        httpOnly,
+        secure,
+        sameSite: sameSite ?? 'Lax',
+      };
+      // If hasCrossSiteAncestor is false, the cookie is a partitioned first party cookie,
+      // this is Chromium specific, see https://chromestatus.com/feature/5144832583663616
+      // and https://github.com/explainers-by-googlers/CHIPS-spec.
+      if (c.partitionKey) {
+        copy._crHasCrossSiteAncestor = c.partitionKey.hasCrossSiteAncestor;
+        copy.partitionKey = c.partitionKey.topLevelSite;
+      }
+      return copy;
     }), urls);
   }
 
   async addCookies(cookies: channels.SetNetworkCookie[]) {
-    await this._browser._session.send('Storage.setCookies', { cookies: network.rewriteCookies(cookies), browserContextId: this._browserContextId });
+    function toChromiumCookie(cookie: channels.SetNetworkCookie) {
+      const { name, value, url, domain, path, expires, httpOnly, secure, sameSite, partitionKey, _crHasCrossSiteAncestor } = cookie;
+      const copy: Protocol.Network.CookieParam = {
+        name,
+        value,
+        url,
+        domain,
+        path,
+        expires,
+        httpOnly,
+        secure,
+        sameSite
+      };
+      if (partitionKey) {
+        copy.partitionKey = {
+          topLevelSite: partitionKey,
+          // _crHasCrossSiteAncestor is non-standard, set it true by default if the cookie is partitioned.
+          hasCrossSiteAncestor: _crHasCrossSiteAncestor ?? true,
+        };
+      }
+      return copy;
+    }
+
+    await this._browser._session.send('Storage.setCookies', {
+      cookies: network.rewriteCookies(cookies).map(toChromiumCookie),
+      browserContextId: this._browserContextId
+    });
   }
 
   async doClearCookies() {
@@ -428,13 +449,13 @@ export class CRBrowserContext extends BrowserContext {
       ['accelerometer', 'sensors'],
       ['gyroscope', 'sensors'],
       ['magnetometer', 'sensors'],
-      ['accessibility-events', 'accessibilityEvents'],
       ['clipboard-read', 'clipboardReadWrite'],
       ['clipboard-write', 'clipboardSanitizedWrite'],
       ['payment-handler', 'paymentHandler'],
       // chrome-specific permissions we have.
       ['midi-sysex', 'midiSysex'],
       ['storage-access', 'storageAccess'],
+      ['local-fonts', 'localFonts'],
     ]);
     const filtered = permissions.map(permission => {
       const protocolPermission = webPermissionToProtocol.get(permission);
@@ -453,13 +474,12 @@ export class CRBrowserContext extends BrowserContext {
     verifyGeolocation(geolocation);
     this._options.geolocation = geolocation;
     for (const page of this.pages())
-      await (page._delegate as CRPage).updateGeolocation();
+      await (page.delegate as CRPage).updateGeolocation();
   }
 
-  async setExtraHTTPHeaders(headers: types.HeadersArray): Promise<void> {
-    this._options.extraHTTPHeaders = headers;
+  async doUpdateExtraHTTPHeaders(): Promise<void> {
     for (const page of this.pages())
-      await (page._delegate as CRPage).updateExtraHTTPHeaders();
+      await (page.delegate as CRPage).updateExtraHTTPHeaders();
     for (const sw of this.serviceWorkers())
       await (sw as CRServiceWorker).updateExtraHTTPHeaders();
   }
@@ -467,14 +487,13 @@ export class CRBrowserContext extends BrowserContext {
   async setUserAgent(userAgent: string | undefined): Promise<void> {
     this._options.userAgent = userAgent;
     for (const page of this.pages())
-      await (page._delegate as CRPage).updateUserAgent();
+      await (page.delegate as CRPage).updateUserAgent();
     // TODO: service workers don't have Emulation domain?
   }
 
-  async setOffline(offline: boolean): Promise<void> {
-    this._options.offline = offline;
+  async doUpdateOffline(): Promise<void> {
     for (const page of this.pages())
-      await (page._delegate as CRPage).updateOffline();
+      await (page.delegate as CRPage).updateOffline();
     for (const sw of this.serviceWorkers())
       await (sw as CRServiceWorker).updateOffline();
   }
@@ -482,26 +501,39 @@ export class CRBrowserContext extends BrowserContext {
   async doSetHTTPCredentials(httpCredentials?: types.Credentials): Promise<void> {
     this._options.httpCredentials = httpCredentials;
     for (const page of this.pages())
-      await (page._delegate as CRPage).updateHttpCredentials();
+      await (page.delegate as CRPage).updateHttpCredentials();
     for (const sw of this.serviceWorkers())
       await (sw as CRServiceWorker).updateHttpCredentials();
   }
 
   async doAddInitScript(initScript: InitScript) {
     for (const page of this.pages())
-      await (page._delegate as CRPage).addInitScript(initScript);
+      await (page.delegate as CRPage).addInitScript(initScript);
   }
 
-  async doRemoveNonInternalInitScripts() {
+  async doRemoveInitScripts(initScripts: InitScript[]) {
     for (const page of this.pages())
-      await (page._delegate as CRPage).removeNonInternalInitScripts();
+      await (page.delegate as CRPage).removeInitScripts(initScripts);
   }
 
   async doUpdateRequestInterception(): Promise<void> {
     for (const page of this.pages())
-      await (page._delegate as CRPage).updateRequestInterception();
+      await (page.delegate as CRPage).updateRequestInterception();
     for (const sw of this.serviceWorkers())
       await (sw as CRServiceWorker).updateRequestInterception();
+  }
+
+  override async doUpdateDefaultViewport() {
+    // No-op, because each page resets its own viewport.
+  }
+
+  override async doUpdateDefaultEmulatedMedia() {
+    // No-op, because each page resets its own color scheme.
+  }
+
+  override async doExposePlaywrightBinding() {
+    for (const page of this._crPages())
+      await page.exposePlaywrightBinding();
   }
 
   async doClose(reason: string | undefined) {
@@ -509,12 +541,7 @@ export class CRBrowserContext extends BrowserContext {
     // dialogs, so we should close all that are currently opened.
     // We also won't get new ones since `Target.disposeBrowserContext` does not trigger
     // beforeunload.
-    const openedBeforeUnloadDialogs: Dialog[] = [];
-    for (const crPage of this._crPages()) {
-      const dialogs = [...crPage._page._frameManager._openedDialogs].filter(dialog => dialog.type() === 'beforeunload');
-      openedBeforeUnloadDialogs.push(...dialogs);
-    }
-    await Promise.all(openedBeforeUnloadDialogs.map(dialog => dialog.dismiss()));
+    await this.dialogManager.closeBeforeUnloadDialogs();
 
     if (!this._browserContextId) {
       await this.stopVideoRecording();
@@ -526,7 +553,7 @@ export class CRBrowserContext extends BrowserContext {
     await this._browser._session.send('Target.disposeBrowserContext', { browserContextId: this._browserContextId });
     this._browser._contexts.delete(this._browserContextId);
     for (const [targetId, serviceWorker] of this._browser._serviceWorkers) {
-      if (serviceWorker._browserContext !== this)
+      if (serviceWorker.browserContext !== this)
         continue;
       // When closing a browser context, service workers are shutdown
       // asynchronously and we get detached from them later.
@@ -545,7 +572,7 @@ export class CRBrowserContext extends BrowserContext {
     // When persistent context is closed, we do not necessary get Target.detachedFromTarget
     // for all the background pages.
     for (const [targetId, backgroundPage] of this._browser._backgroundPages.entries()) {
-      if (backgroundPage._browserContext === this && backgroundPage._initializedPage) {
+      if (backgroundPage._browserContext === this && backgroundPage._page.initializedOrUndefined()) {
         backgroundPage.didClose();
         this._browser._backgroundPages.delete(targetId);
       }
@@ -570,22 +597,22 @@ export class CRBrowserContext extends BrowserContext {
   backgroundPages(): Page[] {
     const result: Page[] = [];
     for (const backgroundPage of this._browser._backgroundPages.values()) {
-      if (backgroundPage._browserContext === this && backgroundPage._initializedPage)
-        result.push(backgroundPage._initializedPage);
+      if (backgroundPage._browserContext === this && backgroundPage._page.initializedOrUndefined())
+        result.push(backgroundPage._page);
     }
     return result;
   }
 
   serviceWorkers(): Worker[] {
-    return Array.from(this._browser._serviceWorkers.values()).filter(serviceWorker => serviceWorker._browserContext === this);
+    return Array.from(this._browser._serviceWorkers.values()).filter(serviceWorker => serviceWorker.browserContext === this);
   }
 
   async newCDPSession(page: Page | Frame): Promise<CDPSession> {
     let targetId: string | null = null;
     if (page instanceof Page) {
-      targetId = (page._delegate as CRPage)._targetId;
+      targetId = (page.delegate as CRPage)._targetId;
     } else if (page instanceof Frame) {
-      const session = (page._page._delegate as CRPage)._sessions.get(page._id);
+      const session = (page._page.delegate as CRPage)._sessions.get(page._id);
       if (!session)
         throw new Error(`This frame does not have a separate CDP session, it is a part of the parent frame's session`);
       targetId = session._targetId;
