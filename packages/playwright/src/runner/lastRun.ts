@@ -23,9 +23,10 @@ import type { FullResult, Suite } from '../../types/testReporter';
 import type { FullConfigInternal } from '../common/config';
 import type { ReporterV2 } from '../reporters/reporterV2';
 
-type LastRunInfo = {
+export type LastRunInfo = {
   status: FullResult['status'];
   failedTests: string[];
+  testDurations?: { [testId: string]: number };
 };
 
 export class LastRunReporter implements ReporterV2 {
@@ -35,21 +36,32 @@ export class LastRunReporter implements ReporterV2 {
 
   constructor(config: FullConfigInternal) {
     this._config = config;
-    const [project] = filterProjects(config.projects, config.cliProjectFilter);
-    if (project)
-      this._lastRunFile = path.join(project.project.outputDir, '.last-run.json');
+    if (config.lastRunFile) {
+      // specified via command line argument
+      this._lastRunFile = config.lastRunFile;
+    } else {
+      const [project] = filterProjects(config.projects, config.cliProjectFilter);
+      if (project)
+        this._lastRunFile = path.join(project.project.outputDir, '.last-run.json');
+    }
   }
 
-  async filterLastFailed() {
+  async lastRunInfo(): Promise<LastRunInfo | undefined> {
     if (!this._lastRunFile)
       return;
     try {
-      const lastRunInfo = JSON.parse(await fs.promises.readFile(this._lastRunFile, 'utf8')) as LastRunInfo;
-      const failedTestIds = new Set(lastRunInfo.failedTests);
-      // Explicitly apply --last-failed filter after sharding.
-      this._config.postShardTestFilters.push(test => failedTestIds.has(test.id));
+      return JSON.parse(await fs.promises.readFile(this._lastRunFile, 'utf8'));
     } catch {
     }
+  }
+
+  async filterLastFailed() {
+    const lastRunInfo = await this.lastRunInfo();
+    if (!lastRunInfo)
+      return;
+    const failedTestIds = new Set(lastRunInfo.failedTests);
+    // Explicitly apply --last-failed filter after sharding.
+    this._config.postShardTestFilters.push(test => failedTestIds.has(test.id));
   }
 
   version(): 'v2' {
@@ -72,6 +84,13 @@ export class LastRunReporter implements ReporterV2 {
       failedTests: this._suite?.allTests().filter(t => !t.ok()).map(t => t.id) || [],
     };
     await fs.promises.mkdir(path.dirname(this._lastRunFile), { recursive: true });
-    await fs.promises.writeFile(this._lastRunFile, JSON.stringify(lastRunInfo, undefined, 2));
+    const failedTests = this._suite?.allTests().filter(t => !t.ok()).map(t => t.id) || [];
+    const testDurations = this._suite?.allTests().reduce((map, t) => {
+      map[t.id] = t.results.map(r => r.duration).reduce((a, b) => a + b, 0);
+      return map;
+    }, {} as { [key: string]: number });
+    const lastRun: LastRunInfo = { status: result.status, failedTests, testDurations }
+    const lastRunReport = JSON.stringify(lastRun, undefined, 2);
+    await fs.promises.writeFile(this._lastRunFile, lastRunReport);
   }
 }

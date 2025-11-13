@@ -20,7 +20,7 @@ import path from 'path';
 
 import { getPackageJsonPath, mergeObjects } from '../util';
 
-import type { Config, Fixtures, Metadata, Project, ReporterDescription } from '../../types/test';
+import type { Config, Fixtures, ShardingMode, Metadata, Project, ReporterDescription } from '../../types/test';
 import type { TestRunnerPluginRegistration } from '../plugins';
 import type { TestCaseFilter } from '../util';
 import type { ConfigCLIOverrides } from './ipc';
@@ -62,6 +62,8 @@ export class FullConfigInternal {
   preOnlyTestFilters: TestCaseFilter[] = [];
   postShardTestFilters: TestCaseFilter[] = [];
   defineConfigWasUsed = false;
+  shardingMode: ShardingMode;
+  lastRunFile: string | undefined;
 
   globalSetups: string[] = [];
   globalTeardowns: string[] = [];
@@ -113,6 +115,8 @@ export class FullConfigInternal {
       workers: resolveWorkers(takeFirst(configCLIOverrides.debug ? 1 : undefined, configCLIOverrides.workers, userConfig.workers, '50%')),
       webServer: null,
     };
+    this.shardingMode = takeFirst(configCLIOverrides.shardingMode, userConfig.shardingMode, 'partition');
+    this.lastRunFile = configCLIOverrides.lastRunFile;
     for (const key in userConfig) {
       if (key.startsWith('@'))
         (this.config as any)[key] = (userConfig as any)[key];

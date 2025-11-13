@@ -31,6 +31,7 @@ import type { TestError } from '../../types/testReporter';
 import type { FullConfigInternal } from '../common/config';
 import type { BlobReportMetadata, JsonAttachment, JsonConfig, JsonEvent, JsonFullResult, JsonLocation, JsonOnConfigureEvent, JsonOnEndEvent, JsonOnProjectEvent, JsonProject, JsonSuite, JsonTestCase } from '../isomorphic/teleReceiver';
 import type * as blobV1 from './versions/blobV1';
+import { LastRunReporter } from '../runner/lastRun';
 
 type StatusCallback = (message: string) => void;
 
@@ -42,7 +43,8 @@ type ReportData = {
 
 export async function createMergedReport(config: FullConfigInternal, dir: string, reporterDescriptions: ReporterDescription[], rootDirOverride: string | undefined) {
   const reporters = await createReporters(config, 'merge', false, reporterDescriptions);
-  const multiplexer = new Multiplexer(reporters);
+  const lastRun = new LastRunReporter(config);
+  const multiplexer = new Multiplexer([...reporters, lastRun]);
   const stringPool = new StringInternPool();
 
   let printStatus: StatusCallback = () => {};
