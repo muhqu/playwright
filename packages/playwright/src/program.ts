@@ -25,20 +25,27 @@ import { gracefullyProcessExitDoNotHang, startProfiling, stopProfiling } from 'p
 import { builtInReporters, defaultReporter, defaultTimeout } from './common/config';
 import { loadConfigFromFile, loadEmptyConfigForMergeReports, resolveConfigLocation } from './common/configLoader';
 export { program } from 'playwright-core/lib/cli/program';
-import { prepareErrorStack } from './reporters/base';
+import { terminalScreen } from './reporters/base';
 import { showHTMLReport } from './reporters/html';
 import { createMergedReport } from './reporters/merge';
 import { filterProjects } from './runner/projectUtils';
-import { Runner } from './runner/runner';
 import * as testServer from './runner/testServer';
 import { runWatchModeLoop } from './runner/watchMode';
-import { serializeError } from './util';
+import { runAllTestsWithConfig, TestRunner } from './runner/testRunner';
+import { createErrorCollectingReporter } from './runner/reporters';
+import { ServerBackendFactory, runMainBackend } from './mcp/sdk/exports';
+import { TestServerBackend } from './mcp/test/testBackend';
+import { ensureSeedTest, seedProject } from './mcp/test/seed';
+import { decorateCommand } from './mcp/program';
+import { setupExitWatchdog } from './mcp/browser/watchdog';
+import { initClaudeCodeRepo, initOpencodeRepo, initVSCodeRepo } from './agents/generateAgents';
 
-import type { TestError } from '../types/testReporter';
 import type { ConfigCLIOverrides } from './common/ipc';
 import type { TraceMode, ShardingMode } from '../types/test';
 import type { ReporterDescription } from '../types/test';
 import type { Command } from 'playwright-core/lib/utilsBundle';
+
+const packageJSON = require('../package.json');
 
 function addTestCommand(program: Command) {
   const command = program.command('test [test-filter...]');
@@ -74,34 +81,15 @@ Examples:
   $ npx playwright test --project=webkit`);
 }
 
-function addListFilesCommand(program: Command) {
-  const command = program.command('list-files [file-filter...]', { hidden: true });
-  command.description('List files with Playwright Test tests');
-  command.option('-c, --config <file>', `Configuration file, or a test directory with optional "playwright.config.{m,c}?{js,ts}"`);
-  command.option('--project <project-name...>', `Only run tests from the specified list of projects, supports '*' wildcard (default: list all projects)`);
-  command.action(async (args, opts) => listTestFiles(opts));
-}
-
 function addClearCacheCommand(program: Command) {
   const command = program.command('clear-cache');
   command.description('clears build and test caches');
   command.option('-c, --config <file>', `Configuration file, or a test directory with optional "playwright.config.{m,c}?{js,ts}"`);
   command.action(async opts => {
-    const config = await loadConfigFromFile(opts.config);
-    const runner = new Runner(config);
-    const { status } = await runner.clearCache();
+    const runner = new TestRunner(resolveConfigLocation(opts.config), {});
+    const { status } = await runner.clearCache(createErrorCollectingReporter(terminalScreen));
     const exitCode = status === 'interrupted' ? 130 : (status === 'passed' ? 0 : 1);
     gracefullyProcessExitDoNotHang(exitCode);
-  });
-}
-
-function addFindRelatedTestFilesCommand(program: Command) {
-  const command = program.command('find-related-test-files [source-files...]', { hidden: true });
-  command.description('Returns the list of related tests to the given files');
-  command.option('-c, --config <file>', `Configuration file, or a test directory with optional "playwright.config.{m,c}?{js,ts}"`);
-  command.action(async (files, options) => {
-    const resolvedFiles = (files as string[]).map(file => path.resolve(process.cwd(), file));
-    await withRunnerAndMutedWrite(options.config, runner => runner.findRelatedTestFiles(resolvedFiles));
   });
 }
 
@@ -110,11 +98,8 @@ function addDevServerCommand(program: Command) {
   command.description('start dev server');
   command.option('-c, --config <file>', `Configuration file, or a test directory with optional "playwright.config.{m,c}?{js,ts}"`);
   command.action(async options => {
-    const config = await loadConfigFromFile(options.config);
-    const runner = new Runner(config);
-    const { status } = await runner.runDevServer();
-    const exitCode = status === 'interrupted' ? 130 : (status === 'passed' ? 0 : 1);
-    gracefullyProcessExitDoNotHang(exitCode);
+    const runner = new TestRunner(resolveConfigLocation(options.config), {});
+    await runner.startDevServer(createErrorCollectingReporter(terminalScreen), 'in-process');
   });
 }
 
@@ -164,6 +149,63 @@ Examples:
   $ npx playwright merge-reports playwright-report`);
 }
 
+function addBrowserMCPServerCommand(program: Command) {
+  const command = program.command('run-mcp-server', { hidden: true });
+  command.description('Interact with the browser over MCP');
+  decorateCommand(command, packageJSON.version);
+}
+
+function addTestMCPServerCommand(program: Command) {
+  const command = program.command('run-test-mcp-server', { hidden: true });
+  command.description('Interact with the test runner over MCP');
+  command.option('--headless', 'run browser in headless mode, headed by default');
+  command.option('-c, --config <file>', `Configuration file, or a test directory with optional "playwright.config.{m,c}?{js,ts}"`);
+  command.option('--host <host>', 'host to bind server to. Default is localhost. Use 0.0.0.0 to bind to all interfaces.');
+  command.option('--port <port>', 'port to listen on for SSE transport.');
+  command.action(async options => {
+    setupExitWatchdog();
+    const backendFactory: ServerBackendFactory = {
+      name: 'Playwright Test Runner',
+      nameInConfig: 'playwright-test-runner',
+      version: packageJSON.version,
+      create: () => new TestServerBackend(options.config, { muteConsole: options.port === undefined, headless: options.headless }),
+    };
+    const mdbUrl = await runMainBackend(
+        backendFactory,
+        {
+          port: options.port === undefined ? undefined : +options.port
+        },
+    );
+    if (mdbUrl)
+      console.error('MCP Listening on: ', mdbUrl);
+  });
+}
+
+function addInitAgentsCommand(program: Command) {
+  const command = program.command('init-agents');
+  command.description('Initialize repository agents');
+  const option = command.createOption('--loop <loop>', 'Agentic loop provider');
+  option.choices(['vscode', 'claude', 'opencode']);
+  command.addOption(option);
+  command.option('-c, --config <file>', `Configuration file to find a project to use for seed test`);
+  command.option('--project <project>', 'Project to use for seed test');
+  command.action(async opts => {
+    if (opts.loop === 'opencode') {
+      await initOpencodeRepo();
+    } else if (opts.loop === 'vscode') {
+      await initVSCodeRepo();
+    } else if (opts.loop === 'claude') {
+      await initClaudeCodeRepo();
+    } else {
+      command.help();
+      return;
+    }
+    const config = await loadConfigFromFile(opts.config);
+    const project = seedProject(config, opts.project);
+    await ensureSeedTest(project, true);
+  });
+}
+
 async function runTests(args: string[], opts: { [key: string]: any }) {
   await startProfiling();
   const cliOverrides = overridesFromOptions(opts);
@@ -177,6 +219,8 @@ async function runTests(args: string[], opts: { [key: string]: any }) {
   config.cliProjectFilter = opts.project || undefined;
   config.cliPassWithNoTests = !!opts.passWithNoTests;
   config.cliLastFailed = !!opts.lastFailed;
+  config.cliTestList = opts.testList ? path.resolve(process.cwd(), opts.testList) : undefined;
+  config.cliTestListInvert = opts.testListInvert ? path.resolve(process.cwd(), opts.testListInvert) : undefined;
 
   // Evaluate project filters against config before starting execution. This enables a consistent error message across run modes
   filterProjects(config.projects, config.cliProjectFilter);
@@ -218,8 +262,7 @@ async function runTests(args: string[], opts: { [key: string]: any }) {
     return;
   }
 
-  const runner = new Runner(config);
-  const status = await runner.runAllTests();
+  const status = await runAllTestsWithConfig(config);
   await stopProfiling('runner');
   const exitCode = status === 'interrupted' ? 130 : (status === 'passed' ? 0 : 1);
   gracefullyProcessExitDoNotHang(exitCode);
@@ -231,32 +274,6 @@ async function runTestServer(opts: { [key: string]: any }) {
   const status = await testServer.runTestServer(opts.config, { }, { host, port });
   const exitCode = status === 'interrupted' ? 130 : (status === 'passed' ? 0 : 1);
   gracefullyProcessExitDoNotHang(exitCode);
-}
-
-export async function withRunnerAndMutedWrite(configFile: string | undefined, callback: (runner: Runner) => Promise<any>) {
-  // Redefine process.stdout.write in case config decides to pollute stdio.
-  const stdoutWrite = process.stdout.write.bind(process.stdout);
-  process.stdout.write = ((a: any, b: any, c: any) => process.stderr.write(a, b, c)) as any;
-  try {
-    const config = await loadConfigFromFile(configFile);
-    const runner = new Runner(config);
-    const result = await callback(runner);
-    stdoutWrite(JSON.stringify(result, undefined, 2), () => {
-      gracefullyProcessExitDoNotHang(0);
-    });
-  } catch (e) {
-    const error: TestError = serializeError(e);
-    error.location = prepareErrorStack(e.stack).location;
-    stdoutWrite(JSON.stringify({ error }, undefined, 2), () => {
-      gracefullyProcessExitDoNotHang(0);
-    });
-  }
-}
-
-async function listTestFiles(opts: { [key: string]: any }) {
-  await withRunnerAndMutedWrite(opts.config, async runner => {
-    return await runner.listTestFiles();
-  });
 }
 
 async function mergeReports(reportDir: string | undefined, opts: { [key: string]: any }) {
@@ -416,6 +433,8 @@ const testOptions: [string, { description: string, choices?: string[], preset?: 
   ['--retries <retries>', { description: `Maximum retry count for flaky tests, zero for no retries (default: no retries)` }],
   ['--shard <shard>', { description: `Shard tests and execute only the selected shard, specify in the form "current/all", 1-based, for example "3/5"` }],
   ['--sharding-mode <mode>', { description: `Sharding algorithm to use; "partition", "round-robin" or "duration-round-robin". Defaults to "partition".`, choices: shardingModes as string[] }],
+  ['--test-list <file>', { description: `Path to a file containing a list of tests to run. See https://playwright.dev/docs/test-cli for more details.` }],
+  ['--test-list-invert <file>', { description: `Path to a file containing a list of tests to skip. See https://playwright.dev/docs/test-cli for more details.` }],
   ['--timeout <timeout>', { description: `Specify test timeout threshold in milliseconds, zero for unlimited (default: ${defaultTimeout})` }],
   ['--trace <mode>', { description: `Force tracing mode`, choices: kTraceModes as string[] }],
   ['--tsconfig <path>', { description: `Path to a single tsconfig applicable to all imported files (default: look up tsconfig for each imported file separately)` }],
@@ -430,9 +449,10 @@ const testOptions: [string, { description: string, choices?: string[], preset?: 
 
 addTestCommand(program);
 addShowReportCommand(program);
-addListFilesCommand(program);
 addMergeReportsCommand(program);
 addClearCacheCommand(program);
-addFindRelatedTestFilesCommand(program);
+addBrowserMCPServerCommand(program);
+addTestMCPServerCommand(program);
 addDevServerCommand(program);
 addTestServerCommand(program);
+addInitAgentsCommand(program);

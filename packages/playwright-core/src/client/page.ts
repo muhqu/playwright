@@ -22,14 +22,14 @@ import { evaluationScript } from './clientHelper';
 import { Coverage } from './coverage';
 import { Download } from './download';
 import { ElementHandle, determineScreenshotType } from './elementHandle';
-import { TargetClosedError, isTargetClosedError, serializeError } from './errors';
+import { TargetClosedError, isTargetClosedError, parseError, serializeError } from './errors';
 import { Events } from './events';
 import { FileChooser } from './fileChooser';
 import { Frame, verifyLoadState } from './frame';
 import { HarRouter } from './harRouter';
 import { Keyboard, Mouse, Touchscreen } from './input';
 import { JSHandle, assertMaxArguments, parseResult, serializeArgument } from './jsHandle';
-import { Response, Route, RouteHandler, WebSocket,  WebSocketRoute, WebSocketRouteHandler, validateHeaders } from './network';
+import { Request, Response, Route, RouteHandler, WebSocket,  WebSocketRoute, WebSocketRouteHandler, validateHeaders } from './network';
 import { Video } from './video';
 import { Waiter } from './waiter';
 import { Worker } from './worker';
@@ -41,13 +41,14 @@ import { trimStringWithEllipsis  } from '../utils/isomorphic/stringUtils';
 import { urlMatches, urlMatchesEqual } from '../utils/isomorphic/urlMatch';
 import { LongStandingScope } from '../utils/isomorphic/manualPromise';
 import { isObject, isRegExp, isString } from '../utils/isomorphic/rtti';
+import { ConsoleMessage } from './consoleMessage';
 
 import type { BrowserContext } from './browserContext';
 import type { Clock } from './clock';
 import type { APIRequestContext } from './fetch';
 import type { WaitForNavigationOptions } from './frame';
 import type { FrameLocator, Locator, LocatorOptions } from './locator';
-import type { Request, RouteHandlerCallback, WebSocketRouteHandlerCallback } from './network';
+import type { RouteHandlerCallback, WebSocketRouteHandlerCallback } from './network';
 import type { FilePayload, Headers, LifecycleEvent, SelectOption, SelectOptionOptions, Size, TimeoutOptions, WaitForEventOptions, WaitForFunctionOptions } from './types';
 import type * as structs from '../../types/structs';
 import type * as api from '../../types/types';
@@ -203,7 +204,7 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
         this._routes.splice(index, 1);
       const handled = await routeHandler.handle(route);
       if (!this._routes.length)
-        this._updateInterceptionPatterns().catch(() => {});
+        this._updateInterceptionPatterns({ internal: true }).catch(() => {});
       if (handled)
         return;
     }
@@ -237,7 +238,6 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
   _onClose() {
     this._closed = true;
     this._browserContext._pages.delete(this);
-    this._browserContext._backgroundPages.delete(this);
     this._disposeHarRouters();
     this.emit(Events.Page.Close, this);
   }
@@ -509,6 +509,10 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
     return await this._mainFrame.evaluate(pageFunction, arg);
   }
 
+  async _evaluateFunction(functionDeclaration: string) {
+    return this._mainFrame._evaluateFunction(functionDeclaration);
+  }
+
   async addInitScript(script: Function | string | { path?: string, content?: string }, arg?: any) {
     const source = await evaluationScript(this._platform, script, arg);
     await this._channel.addInitScript({ source });
@@ -516,7 +520,7 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
 
   async route(url: URLMatch, handler: RouteHandlerCallback, options: { times?: number } = {}): Promise<void> {
     this._routes.unshift(new RouteHandler(this._platform, this._browserContext._options.baseURL, url, handler, options.times));
-    await this._updateInterceptionPatterns();
+    await this._updateInterceptionPatterns({ title: 'Route requests' });
   }
 
   async routeFromHAR(har: string, options: { url?: string | RegExp, notFound?: 'abort' | 'fallback', update?: boolean, updateContent?: 'attach' | 'embed', updateMode?: 'minimal' | 'full'} = {}): Promise<void> {
@@ -534,7 +538,7 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
 
   async routeWebSocket(url: URLMatch, handler: WebSocketRouteHandlerCallback): Promise<void> {
     this._webSocketRoutes.unshift(new WebSocketRouteHandler(this._browserContext._options.baseURL, url, handler));
-    await this._updateWebSocketInterceptionPatterns();
+    await this._updateWebSocketInterceptionPatterns({ title: 'Route WebSockets' });
   }
 
   private _disposeHarRouters() {
@@ -565,17 +569,17 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
       const promises = removed.map(routeHandler => routeHandler.stop(behavior));
       await Promise.all(promises);
     }
-    await this._updateInterceptionPatterns();
+    await this._updateInterceptionPatterns({ title: 'Unroute requests' });
   }
 
-  private async _updateInterceptionPatterns() {
+  private async _updateInterceptionPatterns(options: { internal: true } | { title: string }) {
     const patterns = RouteHandler.prepareInterceptionPatterns(this._routes);
-    await this._channel.setNetworkInterceptionPatterns({ patterns });
+    await this._wrapApiCall(() => this._channel.setNetworkInterceptionPatterns({ patterns }), options);
   }
 
-  private async _updateWebSocketInterceptionPatterns() {
+  private async _updateWebSocketInterceptionPatterns(options: { internal: true } | { title: string }) {
     const patterns = WebSocketRouteHandler.prepareInterceptionPatterns(this._webSocketRoutes);
-    await this._channel.setWebSocketInterceptionPatterns({ patterns });
+    await this._wrapApiCall(() => this._channel.setWebSocketInterceptionPatterns({ patterns }), options);
   }
 
   async screenshot(options: Omit<channels.PageScreenshotOptions, 'mask'> & TimeoutOptions & { path?: string, mask?: api.Locator[] } = {}): Promise<Buffer> {
@@ -663,6 +667,16 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
 
   async fill(selector: string, value: string, options?: channels.FrameFillOptions & TimeoutOptions) {
     return await this._mainFrame.fill(selector, value, options);
+  }
+
+  async consoleMessages(): Promise<ConsoleMessage[]> {
+    const { messages } = await this._channel.consoleMessages();
+    return messages.map(message => new ConsoleMessage(this._platform, message, this));
+  }
+
+  async pageErrors(): Promise<Error[]> {
+    const { errors } = await this._channel.pageErrors();
+    return errors.map(error => parseError(error));
   }
 
   locator(selector: string, options?: LocatorOptions): Locator {
@@ -789,6 +803,11 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
     return await this._mainFrame.waitForFunction(pageFunction, arg, options);
   }
 
+  async requests() {
+    const { requests } = await this._channel.requests();
+    return requests.map(request => Request.from(request));
+  }
+
   workers(): Worker[] {
     return [...this._workers];
   }
@@ -828,8 +847,8 @@ export class Page extends ChannelOwner<channels.PageChannel> implements api.Page
     return result.pdf;
   }
 
-  async _snapshotForAI(): Promise<string> {
-    const result = await this._channel.snapshotForAI();
+  async _snapshotForAI(options: TimeoutOptions = {}): Promise<string> {
+    const result = await this._channel.snapshotForAI({ timeout: this._timeoutSettings.timeout(options) });
     return result.snapshot;
   }
 }

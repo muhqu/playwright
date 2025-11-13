@@ -16,7 +16,6 @@
 
 import { PlaywrightServer } from './remote/playwrightServer';
 import { helper } from './server/helper';
-import { serverSideCallMetadata } from './server/instrumentation';
 import { createPlaywright } from './server/playwright';
 import { createGuid } from './server/utils/crypto';
 import { isUnderTest } from './server/utils/debug';
@@ -27,7 +26,7 @@ import * as validatorPrimitives from './protocol/validatorPrimitives';
 import { ProgressController } from './server/progress';
 
 import type { BrowserServer, BrowserServerLauncher } from './client/browserType';
-import type { LaunchServerOptions, Logger, Env } from './client/types';
+import type { LaunchServerOptions, Logger } from './client/types';
 import type { ProtocolLogger } from './server/types';
 import type { WebSocketEventEmitter } from './utilsBundle';
 import type { Browser } from './server/browser';
@@ -42,7 +41,7 @@ export class BrowserServerLauncherImpl implements BrowserServerLauncher {
   async launchServer(options: LaunchServerOptions & { _sharedBrowser?: boolean, _userDataDir?: string } = {}): Promise<BrowserServer> {
     const playwright = createPlaywright({ sdkLanguage: 'javascript', isServer: true });
     // 1. Pre-launch the browser
-    const metadata = serverSideCallMetadata();
+    const metadata = { id: '', startTime: 0, endTime: 0, type: 'Internal', method: '', params: {}, log: [], internal: true };
     const validatorContext = {
       tChannelImpl: (names: '*' | string[], arg: any, path: string) => {
         throw new validatorPrimitives.ValidationError(`${path}: channels are not expected in launchServer`);
@@ -60,7 +59,7 @@ export class BrowserServerLauncherImpl implements BrowserServerLauncher {
 
     let browser: Browser;
     try {
-      const controller = new ProgressController(metadata, playwright[this._browserName]);
+      const controller = new ProgressController(metadata);
       browser = await controller.run(async progress => {
         if (options._userDataDir !== undefined) {
           const validator = validatorPrimitives.scheme['BrowserTypeLaunchPersistentContextParams'];
@@ -109,7 +108,7 @@ function toProtocolLogger(logger: Logger | undefined): ProtocolLogger | undefine
   } : undefined;
 }
 
-function envObjectToArray(env: Env): { name: string, value: string }[] {
+function envObjectToArray(env: NodeJS.ProcessEnv): { name: string, value: string }[] {
   const result: { name: string, value: string }[] = [];
   for (const name in env) {
     if (!Object.is(env[name], undefined))

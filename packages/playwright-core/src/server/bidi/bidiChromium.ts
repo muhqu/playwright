@@ -26,7 +26,6 @@ import { waitForReadyState } from '../chromium/chromium';
 
 import type { BrowserOptions } from '../browser';
 import type { SdkObject } from '../instrumentation';
-import type { Env } from '../utils/processLauncher';
 import type { ProtocolError } from '../protocolError';
 import type { ConnectionTransport } from '../transport';
 import type * as types from '../types';
@@ -77,11 +76,12 @@ export class BidiChromium extends BrowserType {
     return error;
   }
 
-  override amendEnvironment(env: Env): Env {
+  override amendEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     return env;
   }
 
   override attemptToGracefullyCloseBrowser(transport: ConnectionTransport): void {
+    // Note that it's fine to reuse the transport, since our connection ignores kBrowserCloseMessageId.
     const bidiTransport = (transport as any)[kBidiOverCdpWrapper];
     if (bidiTransport)
       transport = bidiTransport;
@@ -92,7 +92,7 @@ export class BidiChromium extends BrowserType {
     return false;
   }
 
-  override defaultArgs(options: types.LaunchOptions, isPersistent: boolean, userDataDir: string): string[] {
+  override async defaultArgs(options: types.LaunchOptions, isPersistent: boolean, userDataDir: string) {
     const chromeArguments = this._innerDefaultArgs(options);
     chromeArguments.push(`--user-data-dir=${userDataDir}`);
     chromeArguments.push('--remote-debugging-port=0');
@@ -119,11 +119,8 @@ export class BidiChromium extends BrowserType {
     const chromeArguments = [...chromiumSwitches(options.assistantMode)];
 
     if (os.platform() === 'darwin') {
-      // See https://github.com/microsoft/playwright/issues/7362
-      chromeArguments.push('--enable-use-zoom-for-dsf=false');
-      // See https://bugs.chromium.org/p/chromium/issues/detail?id=1407025.
-      if (options.headless)
-        chromeArguments.push('--use-angle');
+      // See https://issues.chromium.org/issues/40277080
+      chromeArguments.push('--enable-unsafe-swiftshader');
     }
 
     if (options.devtools)

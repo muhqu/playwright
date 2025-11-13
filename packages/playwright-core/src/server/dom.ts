@@ -91,6 +91,7 @@ export class FrameExecutionContext extends js.ExecutionContext {
         testIdAttributeName: selectorsRegistry.testIdAttributeName(),
         stableRafCount: this.frame._page.delegate.rafCountForStablePosition(),
         browserName: this.frame._page.browserContext._browser.options.name,
+        isUtilityWorld: this.world === 'utility',
         customEngines,
       };
       const source = `
@@ -447,12 +448,6 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
         return { hitTargetDescription: error };
       }
       hitTargetInterceptionHandle = handle as any;
-      progress.cleanupWhenAborted(() => {
-        // Do not await here, just in case the renderer is stuck (e.g. on alert)
-        // and we won't be able to cleanup.
-        hitTargetInterceptionHandle!.evaluate(h => h.stop()).catch(e => {});
-        hitTargetInterceptionHandle!.dispose();
-      });
     }
 
     const actionResult = await this._page.frameManager.waitForSignalsCreatedBy(progress, options.waitAfter === true, async () => {
@@ -484,6 +479,11 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
       if ((options as any).__testHookAfterPointerAction)
         await progress.race((options as any).__testHookAfterPointerAction());
       return 'done';
+    }).finally(() => {
+      // Do not await here, just in case the renderer is stuck (e.g. on alert)
+      // and we won't be able to cleanup.
+      const stopPromise = hitTargetInterceptionHandle?.evaluate(h => h.stop()).catch(() => {});
+      stopPromise?.then(() => hitTargetInterceptionHandle?.dispose());
     });
     if (actionResult !== 'done')
       return actionResult;
@@ -731,17 +731,21 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
       const result = await progress.race(this.evaluateInUtility(([injected, node]) => injected.elementState(node, 'checked'), {}));
       if (result === 'error:notconnected' || result.received === 'error:notconnected')
         throwElementIsNotAttached();
-      return result.matches;
+      return { matches: result.matches, isRadio: result.isRadio };
     };
     await this._markAsTargetElement(progress);
-    if (await isChecked() === state)
+    const checkedState = await isChecked();
+    if (checkedState.matches === state)
       return 'done';
+    if (!state && checkedState.isRadio)
+      throw new NonRecoverableDOMError('Cannot uncheck radio button. Radio buttons can only be unchecked by selecting another radio button in the same group.');
     const result = await this._click(progress, { ...options, waitAfter: 'disabled' });
     if (result !== 'done')
       return result;
     if (options.trial)
       return 'done';
-    if (await isChecked() !== state)
+    const finalState = await isChecked();
+    if (finalState.matches !== state)
       throw new NonRecoverableDOMError('Clicking the checkbox did not change its state');
     return 'done';
   }
@@ -750,8 +754,8 @@ export class ElementHandle<T extends Node = Node> extends js.JSHandle<T> {
     return this._page.delegate.getBoundingBox(this);
   }
 
-  async ariaSnapshot(options?: { forAI?: boolean, refPrefix?: string }): Promise<string> {
-    return await this.evaluateInUtility(([injected, element, options]) => injected.ariaSnapshot(element, options), options);
+  async ariaSnapshot(): Promise<string> {
+    return await this.evaluateInUtility(([injected, element]) => injected.ariaSnapshot(element, { mode: 'expect' }), {});
   }
 
   async screenshot(progress: Progress, options: ScreenshotOptions): Promise<Buffer> {

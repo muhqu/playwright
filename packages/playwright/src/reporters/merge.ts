@@ -265,6 +265,8 @@ function mergeConfigureEvents(configureEvents: JsonOnConfigureEvent[], rootDirOv
     rootDir: '',
     version: '',
     workers: 0,
+    globalSetup: null,
+    globalTeardown: null,
   };
   for (const event of configureEvents)
     config = mergeConfigs(config, event.params.config);
@@ -346,6 +348,7 @@ async function sortedShardFiles(dir: string) {
 }
 
 function printStatusToStdout(message: string) {
+  // eslint-disable-next-line no-restricted-properties
   process.stdout.write(`${message}\n`);
 }
 

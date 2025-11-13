@@ -28,16 +28,29 @@ export const DefaultSettingsView: React.FC<{}> = () => {
     setShouldPopulateCanvasFromScreenshot,
   ] = useSetting('shouldPopulateCanvasFromScreenshot', false);
   const [darkMode, setDarkMode] = useDarkModeSetting();
+  const [mergeFiles, setMergeFiles] = useSetting('mergeFiles', false);
 
   return (
     <SettingsView
       settings={[
-        { value: darkMode, set: setDarkMode, name: 'Dark mode' },
         {
+          type: 'check',
+          value: darkMode,
+          set: setDarkMode,
+          name: 'Dark mode'
+        },
+        {
+          type: 'check',
+          value: mergeFiles,
+          set: setMergeFiles,
+          name: 'Merge files'
+        },
+        {
+          type: 'check',
           value: shouldPopulateCanvasFromScreenshot,
           set: setShouldPopulateCanvasFromScreenshot,
           name: 'Display canvas content',
-          title: 'Attempt to display the captured canvas appearance in the snapshot preview. May not be accurate.'
+          title: 'Attempt to display the captured canvas appearance in the snapshot preview. May not be accurate.',
         },
       ]}
     />

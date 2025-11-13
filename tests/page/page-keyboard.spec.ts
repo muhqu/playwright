@@ -17,6 +17,7 @@
 
 import { test as it, expect } from './pageTest';
 import { attachFrame } from '../config/utils';
+import { hostPlatform } from '../../packages/playwright-core/src/server/utils/hostPlatform';
 
 it.skip(({ isAndroid }) => isAndroid);
 
@@ -495,8 +496,8 @@ it('should support simple cut-pasting', async ({ page }) => {
   expect(await page.evaluate(() => document.querySelector('div').textContent)).toBe('123123');
 });
 
-it('should support undo-redo', async ({ page, browserName, isLinux }) => {
-  it.fixme(browserName === 'webkit' && isLinux, 'https://github.com/microsoft/playwright/issues/12000');
+it('should support undo-redo', async ({ page, browserName, isLinux, channel }) => {
+  it.fixme(browserName === 'webkit' && isLinux || channel === 'webkit-wsl', 'https://github.com/microsoft/playwright/issues/12000');
   await page.setContent(`<div contenteditable></div>`);
   const div = page.locator('div');
   await expect(div).toHaveText('');
@@ -713,4 +714,25 @@ it('should have correct Keydown/Keyup order when pressing Escape key', async ({ 
 Keydown: Escape Escape STANDARD []
 Keyup: Escape Escape STANDARD []
 `.trim());
+});
+
+it('should close dialog on Escape key press in contenteditable', {
+  annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36727' }
+}, async ({ page, browserName }) => {
+  it.skip(browserName === 'webkit' && hostPlatform.startsWith('debian11'), 'Debian 11 is frozen');
+  await page.setContent(`
+    <dialog>
+      <div contenteditable>Edit Me</div>
+    </dialog>
+  `);
+
+  const dialog = page.locator('dialog');
+  const widget = dialog.locator('[contenteditable]');
+  await dialog.evaluate((node: HTMLDialogElement) => node.showModal());
+  await expect(dialog).toHaveJSProperty('open', true);
+  await expect(widget).toBeVisible();
+
+  await widget.press('Escape');
+  await expect(dialog).toHaveJSProperty('open', false);
+  await expect(widget).not.toBeVisible();
 });

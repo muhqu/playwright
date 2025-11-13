@@ -53,17 +53,19 @@ export async function verifyViewport(page: Page, width: number, height: number) 
   expect(await page.evaluate('window.innerHeight')).toBe(height);
 }
 
-export function expectedSSLError(browserName: string, platform: string): RegExp {
+export function expectedSSLError(browserName: string, platform: string, channel: string): RegExp {
   if (browserName === 'chromium')
     return /net::(ERR_CERT_AUTHORITY_INVALID|ERR_CERT_INVALID)/;
   if (browserName === 'webkit') {
     if (platform === 'darwin')
       return /The certificate for this server is invalid/;
-    else if (platform === 'win32')
+    else if (platform === 'win32' && channel !== 'webkit-wsl')
       return /SSL peer certificate or SSH remote key was not OK/;
     else
       return /Unacceptable TLS certificate|Operation was cancelled/;
   }
+  if (browserName === '_bidiFirefox')
+    return /MOZILLA_PKIX_ERROR_SELF_SIGNED_CERT/;
   return /SSL_ERROR_UNKNOWN/;
 }
 
@@ -163,7 +165,8 @@ export async function parseTrace(file: string): Promise<{ resources: Map<string,
   const traceModel = new TraceModel();
   await traceModel.load(backend, () => {});
   const model = new MultiTraceModel(traceModel.contextEntries);
-  const { rootItem } = buildActionTree(model.actions);
+  const actions = model.filteredActions([]);
+  const { rootItem } = buildActionTree(actions);
   const actionTree: string[] = [];
   const visit = (actionItem: ActionTreeItem, indent: string) => {
     const title = renderTitleForCall({ ...actionItem.action, type: actionItem.action.class });
@@ -173,9 +176,9 @@ export async function parseTrace(file: string): Promise<{ resources: Map<string,
   };
   rootItem.children.forEach(a => visit(a, ''));
   return {
-    titles: model.actions.map(a => renderTitleForCall({ ...a, type: a.class })),
+    titles: actions.map(a => renderTitleForCall({ ...a, type: a.class })),
     resources: backend.entries,
-    actions: model.actions,
+    actions,
     events: model.events,
     errors: model.errors.map(e => e.message),
     model,

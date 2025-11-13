@@ -22,7 +22,7 @@ import { getPackageJsonPath, mergeObjects } from '../util';
 
 import type { Config, Fixtures, ShardingMode, Metadata, Project, ReporterDescription } from '../../types/test';
 import type { TestRunnerPluginRegistration } from '../plugins';
-import type { Matcher } from '../util';
+import type { TestCaseFilter } from '../util';
 import type { ConfigCLIOverrides } from './ipc';
 import type { Location } from '../../types/testReporter';
 import type { FullConfig, FullProject } from '../../types/testReporter';
@@ -57,8 +57,10 @@ export class FullConfigInternal {
   cliListOnly = false;
   cliPassWithNoTests?: boolean;
   cliLastFailed?: boolean;
-  testIdMatcher?: Matcher;
-  lastFailedTestIdMatcher?: Matcher;
+  cliTestList?: string;
+  cliTestListInvert?: string;
+  preOnlyTestFilters: TestCaseFilter[] = [];
+  postShardTestFilters: TestCaseFilter[] = [];
   defineConfigWasUsed = false;
   shardingMode: ShardingMode;
   lastRunFile: string | undefined;
@@ -134,7 +136,8 @@ export class FullConfigInternal {
       this.webServers = [];
     }
 
-    const projectConfigs = configCLIOverrides.projects || userConfig.projects || [userConfig];
+    // When no projects are defined, do not use config.workers as a hard limit for project.workers.
+    const projectConfigs = configCLIOverrides.projects || userConfig.projects || [{ ...userConfig, workers: undefined }];
     this.projects = projectConfigs.map(p => new FullProjectInternal(configDir, userConfig, this, p, this.configCLIOverrides, packageJsonDir));
     resolveProjectDependencies(this.projects);
     this._assignUniqueProjectIds(this.projects);

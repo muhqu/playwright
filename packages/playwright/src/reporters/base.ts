@@ -48,9 +48,9 @@ type TestSummary = {
 
 export type CommonReporterOptions = {
   configDir: string,
-  _mode: 'list' | 'test' | 'merge',
-  _isTestServer: boolean,
-  _commandHash: string,
+  _mode?: 'list' | 'test' | 'merge',
+  _isTestServer?: boolean,
+  _commandHash?: string,
 };
 
 export type Screen = {
@@ -59,24 +59,36 @@ export type Screen = {
   isTTY: boolean;
   ttyWidth: number;
   ttyHeight: number;
+  stdout?: NodeJS.WriteStream;
+  stderr?: NodeJS.WriteStream;
+};
+
+export type TerminalScreen = Screen & {
+  stdout: NodeJS.WriteStream;
+  stderr: NodeJS.WriteStream;
 };
 
 const DEFAULT_TTY_WIDTH = 100;
 const DEFAULT_TTY_HEIGHT = 40;
 
+// eslint-disable-next-line no-restricted-properties
+const originalProcessStdout = process.stdout;
+// eslint-disable-next-line no-restricted-properties
+const originalProcessStderr = process.stderr;
+
 // Output goes to terminal.
-export const terminalScreen: Screen = (() => {
-  let isTTY = !!process.stdout.isTTY;
-  let ttyWidth = process.stdout.columns || 0;
-  let ttyHeight = process.stdout.rows || 0;
+export const terminalScreen: TerminalScreen = (() => {
+  let isTTY = !!originalProcessStdout.isTTY;
+  let ttyWidth = originalProcessStdout.columns || 0;
+  let ttyHeight = originalProcessStdout.rows || 0;
   if (process.env.PLAYWRIGHT_FORCE_TTY === 'false' || process.env.PLAYWRIGHT_FORCE_TTY === '0') {
     isTTY = false;
     ttyWidth = 0;
     ttyHeight = 0;
   } else if (process.env.PLAYWRIGHT_FORCE_TTY === 'true' || process.env.PLAYWRIGHT_FORCE_TTY === '1') {
     isTTY = true;
-    ttyWidth = process.stdout.columns || DEFAULT_TTY_WIDTH;
-    ttyHeight = process.stdout.rows || DEFAULT_TTY_HEIGHT;
+    ttyWidth = originalProcessStdout.columns || DEFAULT_TTY_WIDTH;
+    ttyHeight = originalProcessStdout.rows || DEFAULT_TTY_HEIGHT;
   } else if (process.env.PLAYWRIGHT_FORCE_TTY) {
     isTTY = true;
     const sizeMatch = process.env.PLAYWRIGHT_FORCE_TTY.match(/^(\d+)x(\d+)$/);
@@ -106,7 +118,9 @@ export const terminalScreen: Screen = (() => {
     isTTY,
     ttyWidth,
     ttyHeight,
-    colors
+    colors,
+    stdout: originalProcessStdout,
+    stderr: originalProcessStderr,
   };
 })();
 
@@ -128,19 +142,26 @@ export const internalScreen: Screen = {
   resolveFiles: 'rootDir',
 };
 
+export type TerminalReporterOptions = {
+  screen?: TerminalScreen;
+  omitFailures?: boolean;
+  includeTestId?: boolean;
+};
+
 export class TerminalReporter implements ReporterV2 {
-  screen: Screen = terminalScreen;
+  screen: TerminalScreen;
   config!: FullConfig;
   suite!: Suite;
   totalTestCount = 0;
   result!: FullResult;
   private fileDurations = new Map<string, { duration: number, workers: Set<number> }>();
-  private _omitFailures: boolean;
+  private _options: TerminalReporterOptions;
   private _fatalErrors: TestError[] = [];
   private _failureCount: number = 0;
 
-  constructor(options: { omitFailures?: boolean } = {}) {
-    this._omitFailures = options.omitFailures || false;
+  constructor(options: TerminalReporterOptions = {}) {
+    this.screen = options.screen ?? terminalScreen;
+    this._options = options;
   }
 
   version(): 'v2' {
@@ -292,57 +313,61 @@ export class TerminalReporter implements ReporterV2 {
   epilogue(full: boolean) {
     const summary = this.generateSummary();
     const summaryMessage = this.generateSummaryMessage(summary);
-    if (full && summary.failuresToPrint.length && !this._omitFailures)
+    if (full && summary.failuresToPrint.length && !this._options.omitFailures)
       this._printFailures(summary.failuresToPrint);
     this._printSlowTests();
     this._printSummary(summaryMessage);
   }
 
   private _printFailures(failures: TestCase[]) {
-    console.log('');
+    this.writeLine('');
     failures.forEach((test, index) => {
-      console.log(this.formatFailure(test, index + 1));
+      this.writeLine(this.formatFailure(test, index + 1));
     });
   }
 
   private _printSlowTests() {
     const slowTests = this.getSlowTests();
     slowTests.forEach(([file, duration]) => {
-      console.log(this.screen.colors.yellow('  Slow test file: ') + file + this.screen.colors.yellow(` (${milliseconds(duration)})`));
+      this.writeLine(this.screen.colors.yellow('  Slow test file: ') + file + this.screen.colors.yellow(` (${milliseconds(duration)})`));
     });
     if (slowTests.length)
-      console.log(this.screen.colors.yellow('  Consider running tests from slow files in parallel. See: https://playwright.dev/docs/test-parallel'));
+      this.writeLine(this.screen.colors.yellow('  Consider running tests from slow files in parallel. See: https://playwright.dev/docs/test-parallel'));
   }
 
   private _printSummary(summary: string) {
     if (summary.trim())
-      console.log(summary);
+      this.writeLine(summary);
   }
 
   willRetry(test: TestCase): boolean {
     return test.outcome() === 'unexpected' && test.results.length <= test.retries;
   }
 
-  formatTestTitle(test: TestCase, step?: TestStep, omitLocation: boolean = false): string {
-    return formatTestTitle(this.screen, this.config, test, step, omitLocation);
+  formatTestTitle(test: TestCase, step?: TestStep): string {
+    return formatTestTitle(this.screen, this.config, test, step, this._options);
   }
 
   formatTestHeader(test: TestCase, options: { indent?: string, index?: number, mode?: 'default' | 'error' } = {}): string {
-    return formatTestHeader(this.screen, this.config, test, options);
+    return formatTestHeader(this.screen, this.config, test, { ...options, includeTestId: this._options.includeTestId });
   }
 
   formatFailure(test: TestCase, index?: number): string {
-    return formatFailure(this.screen, this.config, test, index);
+    return formatFailure(this.screen, this.config, test, index, this._options);
   }
 
   formatError(error: TestError): ErrorDetails {
     return formatError(this.screen, error);
   }
+
+  writeLine(line?: string) {
+    this.screen.stdout?.write(line ? line + '\n' : '\n');
+  }
 }
 
-export function formatFailure(screen: Screen, config: FullConfig, test: TestCase, index?: number): string {
+export function formatFailure(screen: Screen, config: FullConfig, test: TestCase, index?: number, options?: TerminalReporterOptions): string {
   const lines: string[] = [];
-  const header = formatTestHeader(screen, config, test, { indent: '  ', index, mode: 'error' });
+  const header = formatTestHeader(screen, config, test, { indent: '  ', index, mode: 'error', includeTestId: options?.includeTestId });
   lines.push(screen.colors.red(header));
   for (const result of test.results) {
     const resultLines: string[] = [];
@@ -470,22 +495,20 @@ export function stepSuffix(step: TestStep | undefined) {
   return stepTitles.map(t => t.split('\n')[0]).map(t => ' › ' + t).join('');
 }
 
-function formatTestTitle(screen: Screen, config: FullConfig, test: TestCase, step?: TestStep, omitLocation: boolean = false): string {
+function formatTestTitle(screen: Screen, config: FullConfig, test: TestCase, step?: TestStep, options: { includeTestId?: boolean } = {}): string {
   // root, project, file, ...describes, test
   const [, projectName, , ...titles] = test.titlePath();
-  let location;
-  if (omitLocation)
-    location = `${relativeTestPath(screen, config, test)}`;
-  else
-    location = `${relativeTestPath(screen, config, test)}:${test.location.line}:${test.location.column}`;
-  const projectTitle = projectName ? `[${projectName}] › ` : '';
-  const testTitle = `${projectTitle}${location} › ${titles.join(' › ')}`;
+  const location = `${relativeTestPath(screen, config, test)}:${test.location.line}:${test.location.column}`;
+  const testId = options.includeTestId ? `[id=${test.id}] ` : '';
+  const projectLabel = options.includeTestId ? `project=` : '';
+  const projectTitle = projectName ? `[${projectLabel}${projectName}] › ` : '';
+  const testTitle = `${testId}${projectTitle}${location} › ${titles.join(' › ')}`;
   const extraTags = test.tags.filter(t => !testTitle.includes(t));
   return `${testTitle}${stepSuffix(step)}${extraTags.length ? ' ' + extraTags.join(' ') : ''}`;
 }
 
-function formatTestHeader(screen: Screen, config: FullConfig, test: TestCase, options: { indent?: string, index?: number, mode?: 'default' | 'error' } = {}): string {
-  const title = formatTestTitle(screen, config, test);
+function formatTestHeader(screen: Screen, config: FullConfig, test: TestCase, options: { indent?: string, index?: number, mode?: 'default' | 'error', includeTestId?: boolean } = {}): string {
+  const title = formatTestTitle(screen, config, test, undefined, options);
   const header = `${options.indent || ''}${options.index ? options.index + ') ' : ''}${title}`;
   let fullHeader = header;
 
@@ -629,15 +652,15 @@ function resolveFromEnv(name: string): string | undefined {
 // In addition to `outputFile` the function returns `outputDir` which should
 // be cleaned up if present by some reporters contract.
 export function resolveOutputFile(reporterName: string, options: {
-    configDir: string,
-    outputDir?: string,
-    fileName?: string,
-    outputFile?: string,
-    default?: {
-      fileName: string,
-      outputDir: string,
-    }
-  }): { outputFile: string, outputDir?: string } | undefined {
+  configDir: string,
+  outputDir?: string,
+  fileName?: string,
+  outputFile?: string,
+  default?: {
+    fileName: string,
+    outputDir: string,
+  }
+}): { outputFile: string, outputDir?: string } | undefined {
   const name = reporterName.toUpperCase();
   let outputFile = resolveFromEnv(`PLAYWRIGHT_${name}_OUTPUT_FILE`);
   if (!outputFile && options.outputFile)

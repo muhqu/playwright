@@ -27,10 +27,8 @@ import type { Progress } from '@protocol/progress';
 
 export class AndroidDispatcher extends Dispatcher<Android, channels.AndroidChannel, RootDispatcher> implements channels.AndroidChannel {
   _type_Android = true;
-  _denyLaunch: boolean;
-  constructor(scope: RootDispatcher, android: Android, denyLaunch: boolean) {
+  constructor(scope: RootDispatcher, android: Android) {
     super(scope, android, 'Android', {});
-    this._denyLaunch = denyLaunch;
   }
 
   async devices(params: channels.AndroidDevicesParams, progress: Progress): Promise<channels.AndroidDevicesResult> {
@@ -161,8 +159,6 @@ export class AndroidDeviceDispatcher extends Dispatcher<AndroidDevice, channels.
   }
 
   async launchBrowser(params: channels.AndroidDeviceLaunchBrowserParams, progress: Progress): Promise<channels.AndroidDeviceLaunchBrowserResult> {
-    if (this.parentScope()._denyLaunch)
-      throw new Error(`Launching more browsers is not allowed.`);
     const context = await this._object.launchBrowser(progress, params.pkg, params);
     return { context: BrowserContextDispatcher.from(this, context) };
   }
@@ -172,8 +168,6 @@ export class AndroidDeviceDispatcher extends Dispatcher<AndroidDevice, channels.
   }
 
   async connectToWebView(params: channels.AndroidDeviceConnectToWebViewParams, progress: Progress): Promise<channels.AndroidDeviceConnectToWebViewResult> {
-    if (this.parentScope()._denyLaunch)
-      throw new Error(`Launching more browsers is not allowed.`);
     return { context: BrowserContextDispatcher.from(this, await this._object.connectToWebView(progress, params.socketName)) };
   }
 }
@@ -325,10 +319,27 @@ const keyMap = new Map<string, number>([
   ['Menu', 82],
   ['Notification', 83],
   ['Search', 84],
+  ['MediaPlayPause', 85],
+  ['MediaStop', 86],
+  ['MediaNext', 87],
+  ['MediaPrevious', 88],
+  ['MediaRewind', 89],
+  ['MediaFastForward', 90],
+  ['MediaPlay', 126],
+  ['MediaPause', 127],
+  ['MediaClose', 128],
+  ['MediaEject', 129],
+  ['MediaRecord', 130],
   ['ChannelUp', 166],
   ['ChannelDown', 167],
   ['AppSwitch', 187],
   ['Assist', 219],
+  ['MediaAudioTrack', 222],
+  ['MediaTopMenu', 226],
+  ['MediaSkipForward', 272],
+  ['MediaSkipBackward', 273],
+  ['MediaStepForward', 274],
+  ['MediaStepBackward', 275],
   ['Cut', 277],
   ['Copy', 278],
   ['Paste', 279],

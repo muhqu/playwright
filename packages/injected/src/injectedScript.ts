@@ -19,13 +19,13 @@ import { asLocator } from '@isomorphic/locatorGenerators';
 import { parseAttributeSelector, parseSelector, stringifySelector, visitAllSelectorParts } from '@isomorphic/selectorParser';
 import { cacheNormalizedWhitespaces, normalizeWhiteSpace, trimStringWithEllipsis } from '@isomorphic/stringUtils';
 
-import { generateAriaTree, getAllByAria, matchesAriaTree, renderAriaTree } from './ariaSnapshot';
-import { enclosingShadowRootOrDocument, isElementVisible, isInsideScope, parentElementOrShadowHost, setGlobalOptions } from './domUtils';
+import { generateAriaTree, getAllElementsMatchingExpectAriaTemplate, matchesExpectAriaTemplate, renderAriaTree } from './ariaSnapshot';
+import { beginDOMCaches, enclosingShadowRootOrDocument, endDOMCaches, isElementVisible, isInsideScope, parentElementOrShadowHost, setGlobalOptions } from './domUtils';
 import { Highlight } from './highlight';
 import { kLayoutSelectorNames, layoutSelectorScore } from './layoutSelectorUtils';
 import { createReactEngine } from './reactSelectorEngine';
 import { createRoleEngine } from './roleSelectorEngine';
-import { getAriaDisabled, getAriaRole, getCheckedAllowMixed, getCheckedWithoutMixed, getElementAccessibleDescription, getElementAccessibleErrorMessage, getElementAccessibleName, getReadonly } from './roleUtils';
+import { beginAriaCaches, endAriaCaches, getAriaDisabled, getAriaRole, getCheckedAllowMixed, getCheckedWithoutMixed, getElementAccessibleDescription, getElementAccessibleErrorMessage, getElementAccessibleName, getReadonly } from './roleUtils';
 import { SelectorEvaluatorImpl, sortInDOMOrder } from './selectorEvaluator';
 import { generateSelector } from './selectorGenerator';
 import { elementMatchesText, elementText, getElementLabels } from './selectorUtils';
@@ -39,7 +39,7 @@ import type { CSSComplexSelectorList } from '@isomorphic/cssParser';
 import type { Language } from '@isomorphic/locatorGenerators';
 import type { NestedSelectorBody, ParsedSelector, ParsedSelectorPart } from '@isomorphic/selectorParser';
 import type * as channels from '@protocol/channels';
-import type { AriaSnapshot } from './ariaSnapshot';
+import type { AriaSnapshot, AriaTreeOptions } from './ariaSnapshot';
 import type { LayoutSelectorName } from './layoutSelectorUtils';
 import type { SelectorEngine, SelectorRoot } from './selectorEngine';
 import type { GenerateSelectorOptions } from './selectorGenerator';
@@ -51,7 +51,7 @@ export type FrameExpectParams = Omit<channels.FrameExpectParams, 'expectedValue'
 
 export type ElementState = 'visible' | 'hidden' | 'enabled' | 'disabled' | 'editable' | 'checked' | 'unchecked' | 'indeterminate' | 'stable';
 export type ElementStateWithoutStable = Exclude<ElementState, 'stable'>;
-export type ElementStateQueryResult = { matches: boolean, received?: string | 'error:notconnected' };
+export type ElementStateQueryResult = { matches: boolean, received?: string | 'error:notconnected', isRadio?: boolean };
 
 export type HitTargetInterceptionResult = {
   stop: () => 'done' | { hitTargetDescription: string };
@@ -72,6 +72,7 @@ export type InjectedScriptOptions = {
   testIdAttributeName: string;
   stableRafCount: number;
   browserName: string;
+  isUtilityWorld?: boolean;
   customEngines: { name: string, source: string }[];
 };
 
@@ -80,6 +81,7 @@ export class InjectedScript {
   readonly _evaluator: SelectorEvaluatorImpl;
   private _stableRafCount: number;
   private _browserName: string;
+  private _isUtilityWorld: boolean;
   readonly onGlobalListenersRemoved: Set<() => void>;
   private _hitTargetInterceptor: undefined | ((event: MouseEvent | PointerEvent | TouchEvent) => void);
   private _highlight: Highlight | undefined;
@@ -87,7 +89,6 @@ export class InjectedScript {
   private _sdkLanguage: Language;
   private _testIdAttributeNameForStrictErrorAndConsoleCodegen: string = 'data-testid';
   private _markedElements?: { callId: string, elements: Set<Element> };
-  // eslint-disable-next-line no-restricted-globals
   readonly window: Window & typeof globalThis;
   readonly document: Document;
   readonly consoleApi: ConsoleAPI;
@@ -107,6 +108,7 @@ export class InjectedScript {
     isInsideScope,
     normalizeWhiteSpace,
     parseAriaSnapshot,
+    generateAriaTree,
     // Builtins protect injected code from clock emulation.
     builtins: null as unknown as Builtins,
   };
@@ -119,7 +121,6 @@ export class InjectedScript {
   private _mouseHitTargetInterceptorEvents: Set<string>;
   private _allHitTargetInterceptorEvents: Set<string>;
 
-  // eslint-disable-next-line no-restricted-globals
   constructor(window: Window & typeof globalThis, options: InjectedScriptOptions) {
     this.window = window;
     this.document = window.document;
@@ -234,6 +235,7 @@ export class InjectedScript {
 
     this._stableRafCount = options.stableRafCount;
     this._browserName = options.browserName;
+    this._isUtilityWorld = !!options.isUtilityWorld;
     setGlobalOptions({ browserNameForWorkarounds: options.browserName });
 
     this._setupGlobalListenersRemovalDetection();
@@ -297,7 +299,7 @@ export class InjectedScript {
     return new Set<Element>(result.map(r => r.element));
   }
 
-  ariaSnapshot(node: Node, options?: { mode?: 'raw' | 'regex', forAI?: boolean, refPrefix?: string }): string {
+  ariaSnapshot(node: Node, options: AriaTreeOptions): string {
     if (node.nodeType !== Node.ELEMENT_NODE)
       throw this.createStacklessError('Can only capture aria snapshot of Element nodes.');
     this._lastAriaSnapshot = generateAriaTree(node as Element, options);
@@ -305,13 +307,13 @@ export class InjectedScript {
   }
 
   ariaSnapshotForRecorder(): { ariaSnapshot: string, refs: Map<Element, string> } {
-    const tree = generateAriaTree(this.document.body, { forAI: true });
-    const ariaSnapshot = renderAriaTree(tree, { forAI: true });
+    const tree = generateAriaTree(this.document.body, { mode: 'ai' });
+    const ariaSnapshot = renderAriaTree(tree, { mode: 'ai' });
     return { ariaSnapshot, refs: tree.refs };
   }
 
-  getAllByAria(document: Document, template: AriaTemplateNode): Element[] {
-    return getAllByAria(document.documentElement, template);
+  getAllElementsMatchingExpectAriaTemplate(document: Document, template: AriaTemplateNode): Element[] {
+    return getAllElementsMatchingExpectAriaTemplate(document.documentElement, template);
   }
 
   querySelectorAll(selector: ParsedSelector, root: Node): Element[] {
@@ -736,9 +738,11 @@ export class InjectedScript {
       const checked = getCheckedWithoutMixed(element);
       if (checked === 'error')
         throw this.createStacklessError('Not a checkbox or radio button');
+      const isRadio = element.nodeName === 'INPUT' && (element as HTMLInputElement).type === 'radio';
       return {
         matches: need === checked,
         received: checked ? 'checked' : 'unchecked',
+        isRadio,
       };
     }
 
@@ -1209,14 +1213,25 @@ export class InjectedScript {
   }
 
   strictModeViolationError(selector: ParsedSelector, matches: Element[]): Error {
-    const infos = matches.slice(0, 10).map(m => ({
-      preview: this.previewNode(m),
-      selector: this.generateSelectorSimple(m),
-    }));
-    const lines = infos.map((info, i) => `\n    ${i + 1}) ${info.preview} aka ${asLocator(this._sdkLanguage, info.selector)}`);
-    if (infos.length < matches.length)
-      lines.push('\n    ...');
-    return this.createStacklessError(`strict mode violation: ${asLocator(this._sdkLanguage, stringifySelector(selector))} resolved to ${matches.length} elements:${lines.join('')}\n`);
+    this._evaluator.begin();
+    beginAriaCaches();
+    beginDOMCaches();
+    try {
+      // Firefox is slow to access DOM bindings in the utility world, making it very expensive to generate a lot of selectors.
+      const maxElements = this._isUtilityWorld && this._browserName === 'firefox' ? 2 : 10;
+      const infos = matches.slice(0, maxElements).map(m => ({
+        preview: this.previewNode(m),
+        selector: this.generateSelectorSimple(m),
+      }));
+      const lines = infos.map((info, i) => `\n    ${i + 1}) ${info.preview} aka ${asLocator(this._sdkLanguage, info.selector)}`);
+      if (infos.length < matches.length)
+        lines.push('\n    ...');
+      return this.createStacklessError(`strict mode violation: ${asLocator(this._sdkLanguage, stringifySelector(selector))} resolved to ${matches.length} elements:${lines.join('')}\n`);
+    } finally {
+      endDOMCaches();
+      endAriaCaches();
+      this._evaluator.end();
+    }
   }
 
   createStacklessError(message: string): Error {
@@ -1469,7 +1484,7 @@ export class InjectedScript {
 
     {
       if (expression === 'to.match.aria') {
-        const result = matchesAriaTree(element, options.expectedValue);
+        const result = matchesExpectAriaTemplate(element, options.expectedValue);
         return {
           received: result.received,
           matches: !!result.matches.length,

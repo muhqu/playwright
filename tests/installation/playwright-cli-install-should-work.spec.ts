@@ -16,6 +16,7 @@
 import { test, expect } from './npmTest';
 import { chromium } from '@playwright/test';
 import path from 'path';
+import { TestProxy } from '../config/proxy';
 
 test.use({ isolateBrowsers: true });
 
@@ -58,6 +59,35 @@ test('install command should work', async ({ exec, checkInstalledSoftwareOnDisk 
         await exec('node sanity.js', pkg, 'chromium firefox webkit');
     });
   }
+});
+
+test('install command should work with HTTPS_PROXY', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36650' } }, async ({ exec, checkInstalledSoftwareOnDisk }) => {
+  await exec('npm i playwright');
+  const proxy = await TestProxy.create(8947 + test.info().workerIndex * 4);
+  proxy.forwardTo(443, { preserveHostname: true });
+  await test.step('playwright install chromium', async () => {
+    const result = await exec('npx playwright install chromium', {
+      env: {
+        HTTPS_PROXY: proxy.URL,
+      }
+    });
+    expect(result).toHaveLoggedSoftwareDownload(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+    await checkInstalledSoftwareOnDisk(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+  });
+  await proxy.stop();
+});
+
+test('install command should ignore HTTP_PROXY', { annotation: { type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36412' } }, async ({ exec, checkInstalledSoftwareOnDisk }) => {
+  await exec('npm i playwright');
+  await test.step('playwright install chromium', async () => {
+    const result = await exec('npx playwright install chromium', {
+      env: {
+        HTTP_PROXY: 'unused',
+      },
+    });
+    expect(result).toHaveLoggedSoftwareDownload(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+    await checkInstalledSoftwareOnDisk(['chromium', 'chromium-headless-shell', 'ffmpeg', ...extraInstalledSoftware]);
+  });
 });
 
 test('should be able to remove browsers', async ({ exec, checkInstalledSoftwareOnDisk }) => {

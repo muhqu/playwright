@@ -159,8 +159,9 @@ for (const kind of ['launchServer', 'run-server'] as const) {
       }
     });
 
-    test('should be able to visit ipv6', async ({ connect, startRemoteServer, ipV6ServerPort }) => {
+    test('should be able to visit ipv6', async ({ connect, startRemoteServer, ipV6ServerPort, channel }) => {
       test.fail(!!process.env.INSIDE_DOCKER, 'docker does not support IPv6 by default');
+      test.fail(channel === 'webkit-wsl', 'WebKit on WSL does not support IPv6: https://github.com/microsoft/WSL/issues/10803');
       const remoteServer = await startRemoteServer(kind);
       const browser = await connect(remoteServer.wsEndpoint());
       const page = await browser.newPage();
@@ -185,8 +186,9 @@ for (const kind of ['launchServer', 'run-server'] as const) {
       (browserType as any)._playwright._defaultLaunchOptions.headless = headless;
     });
 
-    test('should be able to visit ipv6 through localhost', async ({ connect, startRemoteServer, ipV6ServerPort }) => {
+    test('should be able to visit ipv6 through localhost', async ({ connect, startRemoteServer, ipV6ServerPort, channel }) => {
       test.fail(!!process.env.INSIDE_DOCKER, 'docker does not support IPv6 by default');
+      test.skip(channel === 'webkit-wsl', 'WebKit on WSL does not support IPv6: https://github.com/microsoft/WSL/issues/10803');
       const remoteServer = await startRemoteServer(kind);
       const browser = await connect(remoteServer.wsEndpoint());
       const page = await browser.newPage();
@@ -501,6 +503,9 @@ for (const kind of ['launchServer', 'run-server'] as const) {
       await page.evaluate(() => document.body.style.backgroundColor = 'red');
       await new Promise(r => setTimeout(r, 1000));
       await context.close();
+
+      test.info().annotations.push({ type: 'issue', description: 'https://github.com/microsoft/playwright/issues/36685' });
+      expect(fs.readdirSync(videosPath), 'recordVideo.dir might be unaccessible in server mode, so /tmp/artifacts should be used').toHaveLength(0);
 
       const savedAsPath = testInfo.outputPath('my-video.webm');
       await page.video().saveAs(savedAsPath);

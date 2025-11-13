@@ -51,7 +51,8 @@ it.describe('download event', () => {
     });
   });
 
-  it('should report download when navigation turns into download @smoke', async ({ browser, server, browserName, mode }) => {
+  it('should report download when navigation turns into download @smoke', async ({ browser, server, browserName, browserMajorVersion }) => {
+    it.skip(browserName === 'chromium' && browserMajorVersion < 140, 'old chromium throws net::ERR_ABORTED, depends on https://chromium-review.googlesource.com/c/chromium/src/+/6696011');
     const page = await browser.newPage();
     const [download, responseOrError] = await Promise.all([
       page.waitForEvent('download'),
@@ -62,22 +63,17 @@ it.describe('download event', () => {
     const path = await download.path();
     expect(fs.existsSync(path)).toBeTruthy();
     expect(fs.readFileSync(path).toString()).toBe('Hello world');
-    if (browserName === 'chromium') {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('net::ERR_ABORTED');
+
+    expect(responseOrError instanceof Error).toBeTruthy();
+    expect(responseOrError.message).toContain('Download is starting');
+
+    if (browserName !== 'firefox')
       expect(page.url()).toBe('about:blank');
-    } else if (browserName === 'webkit') {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('Download is starting');
-      expect(page.url()).toBe('about:blank');
-    } else {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('Download is starting');
-    }
     await page.close();
   });
 
-  it('should work with Cross-Origin-Opener-Policy', async ({ browser, server, browserName }) => {
+  it('should work with Cross-Origin-Opener-Policy', async ({ browser, server, browserName, browserMajorVersion }) => {
+    it.skip(browserName === 'chromium' && browserMajorVersion < 140, 'old chromium throws net::ERR_ABORTED, depends on https://chromium-review.googlesource.com/c/chromium/src/+/6696011');
     const page = await browser.newPage();
     const [download, responseOrError] = await Promise.all([
       page.waitForEvent('download'),
@@ -88,18 +84,10 @@ it.describe('download event', () => {
     const path = await download.path();
     expect(fs.existsSync(path)).toBeTruthy();
     expect(fs.readFileSync(path).toString()).toBe('Hello world');
-    if (browserName === 'chromium') {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('net::ERR_ABORTED');
+    expect(responseOrError instanceof Error).toBeTruthy();
+    expect(responseOrError.message).toContain('Download is starting');
+    if (browserName !== 'firefox')
       expect(page.url()).toBe('about:blank');
-    } else if (browserName === 'webkit') {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('Download is starting');
-      expect(page.url()).toBe('about:blank');
-    } else {
-      expect(responseOrError instanceof Error).toBeTruthy();
-      expect(responseOrError.message).toContain('Download is starting');
-    }
     await page.close();
   });
 
@@ -432,8 +420,8 @@ it.describe('download event', () => {
     ]).toContain(saveError.message);
   });
 
-  it('should close the context without awaiting the download', async ({ browser, server, browserName, platform }, testInfo) => {
-    it.skip(browserName === 'webkit' && platform === 'linux', 'WebKit on linux does not convert to the download immediately upon receiving headers');
+  it('should close the context without awaiting the download', async ({ browser, server, browserName, platform, channel }, testInfo) => {
+    it.skip(browserName === 'webkit' && (platform === 'linux' || channel === 'webkit-wsl'), 'WebKit on linux does not convert to the download immediately upon receiving headers');
 
     server.setRoute('/downloadStall', (req, res) => {
       res.setHeader('Content-Type', 'application/octet-stream');
@@ -467,8 +455,8 @@ it.describe('download event', () => {
     ]).toContain(saveError.message);
   });
 
-  it('should throw if browser dies', async ({ server, browserType, browserName, platform }, testInfo) => {
-    it.skip(browserName === 'webkit' && platform === 'linux', 'WebKit on linux does not convert to the download immediately upon receiving headers');
+  it('should throw if browser dies', async ({ server, browserType, browserName, platform, channel }, testInfo) => {
+    it.skip(browserName === 'webkit' && (platform === 'linux' || channel === 'webkit-wsl'), 'WebKit on linux does not convert to the download immediately upon receiving headers');
     server.setRoute('/downloadStall', (req, res) => {
       res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('Content-Disposition', 'attachment; filename=file.txt');

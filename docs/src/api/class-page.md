@@ -2677,6 +2677,21 @@ Returns whether the element is [visible](../actionability.md#visible). [`param: 
 * since: v1.8
 - type: <[Keyboard]>
 
+
+## async method: Page.consoleMessages
+* since: v1.56
+- returns: <[Array]<[ConsoleMessage]>>
+
+Returns up to (currently) 200 last console messages from this page. See [`event: Page.console`] for more details.
+
+
+## async method: Page.pageErrors
+* since: v1.56
+- returns: <[Array]<[Error]>>
+
+Returns up to (currently) 200 last page errors from this page. See [`event: Page.pageError`] for more details.
+
+
 ## method: Page.locator
 * since: v1.14
 - returns: <[Locator]>
@@ -2758,7 +2773,7 @@ Returns the opener for popup pages and `null` for others. If the opener has been
 ## async method: Page.pause
 * since: v1.9
 
-Pauses script execution. Playwright will stop executing the script and wait for the user to either press 'Resume'
+Pauses script execution. Playwright will stop executing the script and wait for the user to either press the 'Resume'
 button in the page overlay or to call `playwright.resume()` in the DevTools console.
 
 User can inspect selectors or perform manual steps while paused. Resume will continue running the original script from
@@ -3122,6 +3137,17 @@ return value resolves to `[]`.
 * since: v1.9
 
 
+## async method: Page.requests
+* since: v1.56
+- returns: <[Array]<[Request]>>
+
+Returns up to (currently) 100 last network request from this page. See [`event: Page.request`] for more details.
+
+Returned requests should be accessed immediately, otherwise they might be collected to prevent unbounded memory growth as new requests come in. Once collected, retrieving most information about the request is impossible.
+
+Note that requests reported through the [`event: Page.request`] request are not collected, so there is a trade off between efficient memory usage with [`method: Page.requests`] and the amount of available information reported through [`event: Page.request`].
+
+
 ## async method: Page.addLocatorHandler
 * since: v1.42
 
@@ -3183,7 +3209,7 @@ page.get_by_role("button", name="Start here").click()
 
 ```python async
 # Setup the handler.
-def handler():
+async def handler():
   await page.get_by_role("button", name="No thanks").click()
 await page.add_locator_handler(page.get_by_text("Sign up to the newsletter"), handler)
 
@@ -3240,7 +3266,7 @@ page.get_by_role("button", name="Start here").click()
 
 ```python async
 # Setup the handler.
-def handler():
+async def handler():
   await page.get_by_role("button", name="Remind me later").click()
 await page.add_locator_handler(page.get_by_text("Confirm your security details"), handler)
 
@@ -3297,7 +3323,7 @@ page.get_by_role("button", name="Start here").click()
 
 ```python async
 # Setup the handler.
-def handler():
+async def handler():
   await page.evaluate("window.removeObstructionsForTestIfNeeded()")
 await page.add_locator_handler(page.locator("body"), handler, no_wait_after=True)
 
@@ -3338,7 +3364,7 @@ page.add_locator_handler(page.get_by_label("Close"), handler, times=1)
 ```
 
 ```python async
-def handler(locator):
+async def handler(locator):
   await locator.click()
 await page.add_locator_handler(page.get_by_label("Close"), handler, times=1)
 ```

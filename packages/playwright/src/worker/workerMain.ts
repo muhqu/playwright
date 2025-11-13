@@ -51,6 +51,9 @@ export class WorkerMain extends ProcessRunner {
   private _skipRemainingTestsInSuite: Suite | undefined;
   // The stage of the full cleanup. Once "finished", we can safely stop running anything.
   private _didRunFullCleanup = false;
+  // Whether the worker was stopped due to an unhandled error in a test marked with test.fail().
+  // This should force dispatcher to use a new worker instead.
+  private _stoppedDueToUnhandledErrorInTestFail = false;
   // Whether the worker was requested to stop.
   private _isStopped = false;
   // This promise resolves once the single "run test group" call finishes.
@@ -78,6 +81,7 @@ export class WorkerMain extends ProcessRunner {
 
     process.on('unhandledRejection', reason => this.unhandledError(reason));
     process.on('uncaughtException', error => this.unhandledError(error));
+    // eslint-disable-next-line no-restricted-properties
     process.stdout.write = (chunk: string | Buffer, cb?: any) => {
       this.dispatchEvent('stdOut', stdioChunkToParams(chunk));
       this._currentTest?._tracing.appendStdioToTrace('stdout', chunk);
@@ -87,6 +91,7 @@ export class WorkerMain extends ProcessRunner {
     };
 
     if (!process.env.PW_RUNNER_DEBUG) {
+      // eslint-disable-next-line no-restricted-properties
       process.stderr.write = (chunk: string | Buffer, cb?: any) => {
         this.dispatchEvent('stdErr', stdioChunkToParams(chunk));
         this._currentTest?._tracing.appendStdioToTrace('stderr', chunk);
@@ -189,8 +194,10 @@ export class WorkerMain extends ProcessRunner {
     // an expect() error which we know does not mess things up.
     const isExpectError = (error instanceof Error) && !!(error as any).matcherResult;
     const shouldContinueInThisWorker = this._currentTest.expectedStatus === 'failed' && isExpectError;
-    if (!shouldContinueInThisWorker)
+    if (!shouldContinueInThisWorker) {
+      this._stoppedDueToUnhandledErrorInTestFail = true;
       void this._stop();
+    }
   }
 
   private async _loadIfNeeded() {
@@ -246,7 +253,8 @@ export class WorkerMain extends ProcessRunner {
       const donePayload: DonePayload = {
         fatalErrors: this._fatalErrors,
         skipTestsDueToSetupFailure: [],
-        fatalUnknownTestIds
+        fatalUnknownTestIds,
+        stoppedDueToUnhandledErrorInTestFail: this._stoppedDueToUnhandledErrorInTestFail,
       };
       for (const test of this._skipRemainingTestsInSuite?.allTests() || []) {
         if (entries.has(test.id))
@@ -388,7 +396,10 @@ export class WorkerMain extends ProcessRunner {
 
       try {
         // Run "immediately upon test function finish" callback.
-        await testInfo._runWithTimeout({ type: 'test', slot: afterHooksSlot }, async () => testInfo._onDidFinishTestFunction?.());
+        await testInfo._runWithTimeout({ type: 'test', slot: afterHooksSlot }, async () => {
+          for (const fn of testInfo._onDidFinishTestFunctions)
+            await fn();
+        });
       } catch (error) {
         firstAfterHooksError = firstAfterHooksError ?? error;
       }

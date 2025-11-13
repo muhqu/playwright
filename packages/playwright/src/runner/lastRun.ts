@@ -59,7 +59,9 @@ export class LastRunReporter implements ReporterV2 {
     const lastRunInfo = await this.lastRunInfo();
     if (!lastRunInfo)
       return;
-    this._config.lastFailedTestIdMatcher = id => lastRunInfo.failedTests.includes(id);
+    const failedTestIds = new Set(lastRunInfo.failedTests);
+    // Explicitly apply --last-failed filter after sharding.
+    this._config.postShardTestFilters.push(test => failedTestIds.has(test.id));
   }
 
   version(): 'v2' {
@@ -77,13 +79,18 @@ export class LastRunReporter implements ReporterV2 {
   async onEnd(result: FullResult) {
     if (!this._lastRunFile || this._config.cliListOnly)
       return;
+    const lastRunInfo: LastRunInfo = {
+      status: result.status,
+      failedTests: this._suite?.allTests().filter(t => !t.ok()).map(t => t.id) || [],
+    };
     await fs.promises.mkdir(path.dirname(this._lastRunFile), { recursive: true });
-    const failedTests = this._suite?.allTests().filter(t => !t.ok()).map(t => t.id);
+    const failedTests = this._suite?.allTests().filter(t => !t.ok()).map(t => t.id) || [];
     const testDurations = this._suite?.allTests().reduce((map, t) => {
       map[t.id] = t.results.map(r => r.duration).reduce((a, b) => a + b, 0);
       return map;
     }, {} as { [key: string]: number });
-    const lastRunReport = JSON.stringify({ status: result.status, failedTests, testDurations }, undefined, 2);
+    const lastRun: LastRunInfo = { status: result.status, failedTests, testDurations }
+    const lastRunReport = JSON.stringify(lastRun, undefined, 2);
     await fs.promises.writeFile(this._lastRunFile, lastRunReport);
   }
 }

@@ -68,6 +68,8 @@ export type WorkerInitParams = {
   projectId: string;
   config: SerializedConfig;
   artifactsDir: string;
+  pauseOnError: boolean;
+  pauseAtEnd: boolean;
 };
 
 export type TestBeginPayload = {
@@ -130,6 +132,7 @@ export type DonePayload = {
   fatalErrors: TestInfoErrorImpl[];
   skipTestsDueToSetupFailure: string[];  // test ids
   fatalUnknownTestIds?: string[];
+  stoppedDueToUnhandledErrorInTestFail?: boolean;
 };
 
 export type TestOutputPayload = {

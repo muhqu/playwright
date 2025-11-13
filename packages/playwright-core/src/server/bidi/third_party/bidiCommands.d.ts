@@ -117,6 +117,23 @@ export interface Commands {
     params: Bidi.Emulation.SetGeolocationOverrideParameters;
     returnType: Bidi.EmptyResult;
   };
+  'emulation.setScreenOrientationOverride': {
+    params: Bidi.Emulation.SetScreenOrientationOverrideParameters;
+    returnType: Bidi.EmptyResult;
+  };
+  'emulation.setTimezoneOverride': {
+    params: Bidi.Emulation.SetTimezoneOverrideParameters;
+    returnType: Bidi.EmptyResult;
+  };
+  'emulation.setUserAgentOverride': {
+    params: Bidi.Emulation.SetUserAgentOverrideParameters;
+    returnType: Bidi.Emulation.SetUserAgentOverrideResult;
+  };
+
+  'emulation.setLocaleOverride': {
+    params: Bidi.Emulation.SetLocaleOverrideParameters;
+    returnType: Bidi.EmptyResult;
+  };
 
   'permissions.setPermission': {
     params: Bidi.Permissions.SetPermissionParameters;
@@ -159,6 +176,19 @@ export interface Commands {
   'storage.setCookie': {
     params: Bidi.Storage.SetCookieParameters;
     returnType: Bidi.Storage.SetCookieParameters;
+  };
+
+  'network.addDataCollector': {
+    params: Bidi.Network.AddDataCollectorParameters;
+    returnType: Bidi.Network.AddDataCollectorResult;
+  };
+  'network.removeDataCollector': {
+    params: Bidi.Network.RemoveDataCollectorParameters;
+    returnType: Bidi.Network.RemoveDataCollectorResult;
+  };
+  'network.getData': {
+    params: Bidi.Network.GetDataParameters;
+    returnType: Bidi.Network.GetDataResult;
   };
 
   'network.addIntercept': {

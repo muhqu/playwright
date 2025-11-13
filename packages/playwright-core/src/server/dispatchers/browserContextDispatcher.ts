@@ -22,9 +22,7 @@ import { ArtifactDispatcher } from './artifactDispatcher';
 import { CDPSessionDispatcher } from './cdpSessionDispatcher';
 import { DialogDispatcher } from './dialogDispatcher';
 import { Dispatcher } from './dispatcher';
-import { ElementHandleDispatcher } from './elementHandlerDispatcher';
 import { FrameDispatcher } from './frameDispatcher';
-import { JSHandleDispatcher } from './jsHandleDispatcher';
 import { APIRequestContextDispatcher, RequestDispatcher, ResponseDispatcher, RouteDispatcher } from './networkDispatchers';
 import { BindingCallDispatcher, PageDispatcher, WorkerDispatcher } from './pageDispatcher';
 import { CRBrowserContext } from '../chromium/crBrowser';
@@ -35,7 +33,7 @@ import { WritableStreamDispatcher } from './writableStreamDispatcher';
 import { createGuid } from '../utils/crypto';
 import { urlMatches } from '../../utils/isomorphic/urlMatch';
 import { Recorder } from '../recorder';
-import { ProgrammaticRecorderApp, RecorderApp } from '../recorder/recorderApp';
+import { RecorderApp } from '../recorder/recorderApp';
 
 import type { Artifact } from '../artifact';
 import type { ConsoleMessage } from '../console';
@@ -126,15 +124,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
         const pageDispatcher = PageDispatcher.from(this, page);
         this._dispatchEvent('console', {
           page: pageDispatcher,
-          type: message.type(),
-          text: message.text(),
-          args: message.args().map(a => {
-            const elementHandle = a.asElement();
-            if (elementHandle)
-              return ElementHandleDispatcher.from(FrameDispatcher.from(this, elementHandle._frame), elementHandle);
-            return JSHandleDispatcher.fromJSHandle(pageDispatcher, a);
-          }),
-          location: message.location(),
+          ...pageDispatcher.serializeConsoleMessage(message),
         });
       }
     });
@@ -147,9 +137,6 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
     context.dialogManager.addDialogHandler(this._dialogHandler);
 
     if (context._browser.options.name === 'chromium') {
-      for (const page of (context as CRBrowserContext).backgroundPages())
-        this._dispatchEvent('backgroundPage', { page: PageDispatcher.from(this, page) });
-      this.addObjectListener(CRBrowserContext.CREvents.BackgroundPage, page => this._dispatchEvent('backgroundPage', { page: PageDispatcher.from(this, page) }));
       for (const serviceWorker of (context as CRBrowserContext).serviceWorkers())
         this._dispatchEvent('serviceWorker', { worker: new WorkerDispatcher(this, serviceWorker) });
       this.addObjectListener(CRBrowserContext.CREvents.ServiceWorker, serviceWorker => this._dispatchEvent('serviceWorker', { worker: new WorkerDispatcher(this, serviceWorker) }));
@@ -200,8 +187,8 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
         page: PageDispatcher.fromNullable(this, request.frame()?._page.initializedOrUndefined()),
       });
     });
-    this.addObjectListener(BrowserContext.Events.RecorderEvent, ({ event, data, page }: { event: 'actionAdded' | 'actionUpdated' | 'signalAdded', data: any, page: Page }) => {
-      this._dispatchEvent('recorderEvent', { event, data, page: PageDispatcher.from(this, page) });
+    this.addObjectListener(BrowserContext.Events.RecorderEvent, ({ event, data, page, code }: { event: 'actionAdded' | 'actionUpdated' | 'signalAdded', data: any, page: Page, code: string }) => {
+      this._dispatchEvent('recorderEvent', { event, data, code, page: PageDispatcher.from(this, page) });
     });
   }
 
@@ -249,7 +236,7 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   }
 
   async newPage(params: channels.BrowserContextNewPageParams, progress: Progress): Promise<channels.BrowserContextNewPageResult> {
-    return { page: PageDispatcher.from(this, await this._context.newPage(progress, false /* isServerSide */)) };
+    return { page: PageDispatcher.from(this, await this._context.newPage(progress)) };
   }
 
   async cookies(params: channels.BrowserContextCookiesParams, progress: Progress): Promise<channels.BrowserContextCookiesResult> {
@@ -336,11 +323,6 @@ export class BrowserContextDispatcher extends Dispatcher<BrowserContext, channel
   }
 
   async enableRecorder(params: channels.BrowserContextEnableRecorderParams, progress: Progress): Promise<void> {
-    const recorder = await Recorder.forContext(this._context, params);
-    if (params.recorderMode === 'api') {
-      await ProgrammaticRecorderApp.run(this._context, recorder);
-      return;
-    }
     await RecorderApp.show(this._context, params);
   }
 

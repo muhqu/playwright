@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { ManualPromise } from 'playwright-core/lib/utils';
+import { escapeWithQuotes, ManualPromise } from 'playwright-core/lib/utils';
 
 import { fixtureParameterNames } from '../common/fixtures';
 import { filterStackFile, formatLocation } from '../util';
@@ -35,7 +35,7 @@ class Fixture {
   private _selfTeardownComplete: Promise<void> | undefined;
   private _setupDescription: FixtureDescription;
   private _teardownDescription: FixtureDescription;
-  private _stepInfo: { title: string, category: 'fixture', location?: Location } | undefined;
+  private _stepInfo: { title: string, category: 'fixture', location?: Location, group?: string } | undefined;
   _deps = new Set<Fixture>();
   _usages = new Set<Fixture>();
 
@@ -43,11 +43,14 @@ class Fixture {
     this.runner = runner;
     this.registration = registration;
     this.value = null;
-    const shouldGenerateStep = !this.registration.box && !this.registration.option;
     const isUserFixture = this.registration.location && filterStackFile(this.registration.location.file);
     const title = this.registration.customTitle || this.registration.name;
     const location = isUserFixture ? this.registration.location : undefined;
-    this._stepInfo = shouldGenerateStep ? { title, category: 'fixture', location } : undefined;
+    this._stepInfo = { title: `Fixture ${escapeWithQuotes(title, '"')}`, category: 'fixture', location };
+    if (this.registration.box === 'self')
+      this._stepInfo = undefined;
+    else if (this.registration.box)
+      this._stepInfo.group = isUserFixture ? 'configuration' : 'internal';
     this._setupDescription = {
       title,
       phase: 'setup',
@@ -114,6 +117,8 @@ class Fixture {
     this._selfTeardownComplete = (async () => {
       try {
         await this.registration.fn(params, useFunc, info);
+        if (!useFuncStarted.isDone())
+          throw new Error(`use() was not called in fixture "${this.registration.name}"`);
       } catch (error) {
         this.failed = true;
         if (!useFuncStarted.isDone())

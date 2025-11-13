@@ -26,7 +26,6 @@ import { collapseActions } from './recorder/recorderUtils';
 import { JavaScriptLanguageGenerator } from './codegen/javascript';
 
 import type { Language } from '../utils';
-import type { Browser } from './browser';
 import type { BrowserContext } from './browserContext';
 import type { InstrumentationListener } from './instrumentation';
 import type { Playwright } from './playwright';
@@ -46,6 +45,7 @@ export class DebugController extends SdkObject {
   private _trackHierarchyListener: InstrumentationListener | undefined;
   private _playwright: Playwright;
   _sdkLanguage: Language = 'javascript';
+  _generateAutoExpect = false;
 
   constructor(playwright: Playwright) {
     super({ attribution: { isInternalPlaywright: true }, instrumentation: createInstrumentation() } as any, undefined, 'DebugController');
@@ -74,21 +74,9 @@ export class DebugController extends SdkObject {
     }
   }
 
-  async resetForReuse(progress: Progress) {
-    const contexts = new Set<BrowserContext>();
-    for (const page of this._playwright.allPages())
-      contexts.add(page.browserContext);
-    for (const context of contexts)
-      await context.resetForReuse(progress, null);
-  }
-
-  async navigate(progress: Progress, url: string) {
-    for (const p of this._playwright.allPages())
-      await p.mainFrame().goto(progress, url);
-  }
-
-  async setRecorderMode(progress: Progress, params: { mode: Mode, testIdAttributeName?: string }) {
+  async setRecorderMode(progress: Progress, params: { mode: Mode, testIdAttributeName?: string, generateAutoExpect?: boolean }) {
     await progress.race(this._closeBrowsersWithoutPages());
+    this._generateAutoExpect = !!params.generateAutoExpect;
 
     if (params.mode === 'none') {
       for (const recorder of await progress.race(this._allRecorders())) {
@@ -105,7 +93,7 @@ export class DebugController extends SdkObject {
     if (!pages.length) {
       const [browser] = this._playwright.allBrowsers();
       const context = await browser.newContextForReuse(progress, {});
-      await context.newPage(progress, false /* isServerSide */);
+      await context.newPage(progress);
     }
     // Update test id attribute.
     if (params.testIdAttributeName) {
@@ -137,11 +125,7 @@ export class DebugController extends SdkObject {
     for (const recorder of await progress.race(this._allRecorders()))
       recorder.hideHighlightedSelector();
     // Hide all locator.highlight highlights.
-    await this._playwright.hideHighlight();
-  }
-
-  allBrowsers(): Browser[] {
-    return [...this._playwright.allBrowsers()];
+    await Promise.all(this._playwright.allPages().map(p => p.hideHighlight().catch(() => {})));
   }
 
   async resume(progress: Progress) {
@@ -151,10 +135,6 @@ export class DebugController extends SdkObject {
 
   kill() {
     gracefullyProcessExitDoNotHang(0);
-  }
-
-  async closeAllBrowsers() {
-    await Promise.all(this.allBrowsers().map(browser => browser.close({ reason: 'Close all browsers requested' })));
   }
 
   private _emitSnapshot(initial: boolean) {
@@ -203,6 +183,7 @@ function wireListeners(recorder: Recorder, debugController: DebugController) {
       browserName: 'chromium',
       launchOptions: {},
       contextOptions: {},
+      generateAutoExpect: debugController._generateAutoExpect,
     });
     debugController.emit(DebugController.Events.SourceChanged, { text, header, footer, actions: actionTexts });
   };

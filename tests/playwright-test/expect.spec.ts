@@ -67,7 +67,8 @@ test('should include custom expect message with web-first assertions', async ({ 
   expect(result.passed).toBe(0);
 
   expect(result.output).toContain('Error: x-foo must be visible');
-  expect(result.output).toContain(`Timed out 1ms waiting for expect(locator).toBeVisible()`);
+  expect(result.output).toContain('expect(locator).toBeVisible() failed');
+  expect(result.output).toContain('Timeout: 1ms');
   expect(result.output).toContain('Call log:');
 });
 
@@ -532,13 +533,13 @@ test('should support toHaveURL with baseURL from webServer', async ({ runInlineT
   }, { workers: 1 });
   const output = result.output;
   expect(output).toContain('expect(page).toHaveURL');
-  expect(output).toContain(`Expected string: \"http://localhost:${port}/kek\"`);
+  expect(output).toContain(`Expected: \"http://localhost:${port}/kek\"`);
   expect(result.passed).toBe(1);
   expect(result.failed).toBe(1);
   expect(result.exitCode).toBe(1);
 });
 
-test('should respect expect.timeout', async ({ runInlineTest }) => {
+test('should respect expect.timeout in toHaveURL', async ({ runInlineTest }) => {
   const result = await runInlineTest({
     'playwright.config.js': `module.exports = { expect: { timeout: 1000 } }`,
     'a.test.ts': `
@@ -548,7 +549,8 @@ test('should respect expect.timeout', async ({ runInlineTest }) => {
       test('timeout', async ({ page }) => {
         await page.goto('data:text/html,<div>A</div>');
         const error = await expect(page).toHaveURL('data:text/html,<div>B</div>').catch(e => e);
-        expect(stripVTControlCharacters(error.message)).toContain('Timed out 1000ms waiting for expect(page).toHaveURL(expected)');
+        expect(stripVTControlCharacters(error.message)).toContain('expect(page).toHaveURL(expected) failed');
+        expect(stripVTControlCharacters(error.message)).toContain('Timeout:  1000ms');
         expect(error.message).toContain('data:text/html,<div>');
       });
       `,
@@ -567,7 +569,8 @@ test('should support toHaveURL predicate', async ({ runInlineTest }) => {
       test('predicate', async ({ page }) => {
         await page.goto('data:text/html,<div>A</div>');
         const error = await expect(page).toHaveURL(url => url === 'data:text/html,<div>B</div>').catch(e => e);
-        expect(stripVTControlCharacters(error.message)).toContain('Timed out 1000ms waiting for expect(page).toHaveURL(expected)');
+        expect(stripVTControlCharacters(error.message)).toContain('expect(page).toHaveURL(expected) failed');
+        expect(stripVTControlCharacters(error.message)).toContain('Timeout:  1000ms');
         expect(error.message).toContain('data:text/html,<div>');
       });
       `,
@@ -612,8 +615,8 @@ test('should print expected/received before timeout', async ({ runInlineTest }) 
   expect(result.passed).toBe(0);
   expect(result.failed).toBe(1);
   expect(result.output).toContain('Test timeout of 2000ms exceeded.');
-  expect(result.output).toContain('Expected string: "Text 2"');
-  expect(result.output).toContain('Received string: "Text content"');
+  expect(result.output).toContain('Expected: "Text 2"');
+  expect(result.output).toContain('Received: "Text content"');
 });
 
 test('should print pending operations for toHaveText', async ({ runInlineTest }) => {
@@ -631,8 +634,8 @@ test('should print pending operations for toHaveText', async ({ runInlineTest })
   expect(result.exitCode).toBe(1);
   const output = result.output;
   expect(output).toContain(`expect(locator).toHaveText(expected)`);
-  expect(output).toContain('Expected string: "Text"');
-  expect(output).toContain('Received: <element(s) not found>');
+  expect(output).toContain('Expected: "Text"');
+  expect(output).toContain('Error: element(s) not found');
   expect(output).toContain('waiting for locator(\'no-such-thing\')');
 });
 
@@ -687,8 +690,8 @@ test('should print expected/received on Ctrl+C', async ({ interactWithTestRunner
   const result = parseTestRunnerOutput(testProcess.output);
   expect(result.passed).toBe(0);
   expect(result.interrupted).toBe(1);
-  expect(result.output).toContain('Expected string: "Text 2"');
-  expect(result.output).toContain('Received string: "Text content"');
+  expect(result.output).toContain('Expected: "Text 2"');
+  expect(result.output).toContain('Received: "Text content"');
 });
 
 test('should not print timed out error message when test times out', async ({ runInlineTest }) => {
@@ -706,7 +709,7 @@ test('should not print timed out error message when test times out', async ({ ru
   expect(result.exitCode).toBe(1);
   const output = result.output;
   expect(output).toContain('Test timeout of 3000ms exceeded');
-  expect(output).not.toContain('Timed out 5000ms waiting for expect');
+  expect(output).not.toContain('Timeout:  5000ms');
   expect(output).toContain(`Error: expect(locator).toHaveText(expected)`);
 });
 
@@ -1020,7 +1023,8 @@ test('should respect timeout from configured expect when used outside of the tes
 
   expect(code).toBe(1);
   expect(stdout).toBe('');
-  expect(stripAnsi(stderr)).toContain('Timed out 10ms waiting for expect(locator).toBeAttached()');
+  expect(stripAnsi(stderr)).toContain('expect(locator).toBeAttached() failed');
+  expect(stripAnsi(stderr)).toContain('Timeout: 10ms');
 });
 
 test('should expose timeout to custom matchers', async ({ runInlineTest, runTSC }) => {

@@ -15,21 +15,22 @@
 */
 
 import type { TestAnnotation } from '@playwright/test';
-import type { TestCase, TestCaseSummary } from './types';
+import type { HTMLReportOptions, TestCase, TestCaseSummary } from './types';
 import * as React from 'react';
 import { TabbedPane } from './tabbedPane';
 import { AutoChip } from './chip';
 import './common.css';
-import { Link, ProjectLink, SearchParamsContext, testResultHref, TraceLink } from './links';
+import { Link, SearchParamsContext, testResultHref, TraceLink } from './links';
 import { statusIcon } from './statusIcon';
 import './testCaseView.css';
 import { TestResultView } from './testResultView';
 import { linkifyText } from '@web/renderUtils';
-import { hashStringToInt, msToString } from './utils';
+import { msToString } from './utils';
 import { clsx } from '@web/uiUtils';
 import { CopyToClipboardContainer } from './copyToClipboard';
 import { HeaderView } from './headerView';
 import type { MetadataWithCommitInfo } from '@playwright/isomorphic/types';
+import { ProjectAndTagLabelsView } from './labels';
 
 export const TestCaseView: React.FC<{
   projectNames: string[],
@@ -38,12 +39,12 @@ export const TestCaseView: React.FC<{
   next: TestCaseSummary | undefined,
   prev: TestCaseSummary | undefined,
   run: number,
-}> = ({ projectNames, test, testRunMetadata, run, next, prev }) => {
+  options?: HTMLReportOptions,
+}> = ({ projectNames, test, testRunMetadata, run, next, prev, options }) => {
   const [selectedResultIndex, setSelectedResultIndex] = React.useState(run);
   const searchParams = React.useContext(SearchParamsContext);
 
   const filterParam = searchParams.has('q') ? '&q=' + searchParams.get('q') : '';
-  const labels = React.useMemo(() => test.tags, [test]);
   const visibleTestAnnotations = test.annotations.filter(a => !a.type.startsWith('_')) ?? [];
 
   return <>
@@ -66,10 +67,7 @@ export const TestCaseView: React.FC<{
       <TraceLink test={test} trailingSeparator={true} />
       <div className='test-case-duration'>{msToString(test.duration)}</div>
     </div>
-    {(!!test.projectName || labels) && <div className='test-case-project-labels-row'>
-      {!!test.projectName && <ProjectLink projectNames={projectNames} projectName={test.projectName}></ProjectLink>}
-      {labels && <LabelsLinkView labels={labels} />}
-    </div>}
+    <ProjectAndTagLabelsView style={{ marginLeft: '6px' }} projectNames={projectNames} activeProjectName={test.projectName} otherLabels={test.tags} />
     {test.results.length === 0 && visibleTestAnnotations.length !== 0 && <AutoChip header='Annotations' dataTestId='test-case-annotations'>
       {visibleTestAnnotations.map((annotation, index) => <TestCaseAnnotationView key={index} annotation={annotation} />)}
     </AutoChip>}
@@ -86,7 +84,7 @@ export const TestCaseView: React.FC<{
             {!!visibleAnnotations.length && <AutoChip header='Annotations' dataTestId='test-case-annotations'>
               {visibleAnnotations.map((annotation, index) => <TestCaseAnnotationView key={index} annotation={annotation} />)}
             </AutoChip>}
-            <TestResultView test={test!} result={result} testRunMetadata={testRunMetadata} />
+            <TestResultView test={test!} result={result} testRunMetadata={testRunMetadata} options={options} />
           </>;
         },
       })) || []} selectedTab={String(selectedResultIndex)} setSelectedTab={id => setSelectedResultIndex(+id)} />
@@ -107,19 +105,3 @@ function retryLabel(index: number) {
     return 'Run';
   return `Retry #${index}`;
 }
-
-const LabelsLinkView: React.FC<React.PropsWithChildren<{
-  labels: string[],
-}>> = ({ labels }) => {
-  return labels.length > 0 ? (
-    <>
-      {labels.map(label => (
-        <a key={label} style={{ textDecoration: 'none', color: 'var(--color-fg-default)' }} href={`#?q=${label}`} >
-          <span style={{ margin: '6px 0 0 6px', cursor: 'pointer' }} className={clsx('label', 'label-color-' + hashStringToInt(label))}>
-            {label.slice(1)}
-          </span>
-        </a>
-      ))}
-    </>
-  ) : null;
-};

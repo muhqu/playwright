@@ -16,7 +16,6 @@
 
 import { serializeExpectedTextValues } from '../../utils';
 import { toKeyboardModifiers } from '../codegen/language';
-import { serverSideCallMetadata } from '../instrumentation';
 import { buildFullSelector, mainFrameForAction } from './recorderUtils';
 import { Progress, ProgressController } from '../progress';
 
@@ -26,9 +25,8 @@ import type * as actions from '@recorder/actions';
 import type { Frame } from '../frames';
 
 export async function performAction(pageAliases: Map<Page, string>, actionInContext: actions.ActionInContext) {
-  const callMetadata = serverSideCallMetadata();
   const mainFrame = mainFrameForAction(pageAliases, actionInContext);
-  const controller = new ProgressController(callMetadata, mainFrame);
+  const controller = new ProgressController();
   const kActionTimeout = 5000;
   return await controller.run(progress => performActionImpl(progress, mainFrame, actionInContext), kActionTimeout);
 }
@@ -54,6 +52,11 @@ async function performActionImpl(progress: Progress, mainFrame: Frame, actionInC
   if (action.name === 'click') {
     const options = toClickOptions(action);
     await mainFrame.click(progress, selector, { ...options, strict: true });
+    return;
+  }
+
+  if (action.name === 'hover') {
+    await mainFrame.hover(progress, selector, { position: action.position, strict: true });
     return;
   }
 

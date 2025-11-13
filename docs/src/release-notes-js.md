@@ -6,13 +6,42 @@ toc_max_heading_level: 2
 
 import LiteYouTube from '@site/src/components/LiteYouTube';
 
+## Version 1.55
+
+### New APIs
+
+- New Property [`property: TestStepInfo.titlePath`] Returns the full title path starting from the test file, including test and step titles.
+
+### Codegen
+
+- Automatic `toBeVisible()` assertions: Codegen can now generate automatic `toBeVisible()` assertions for common UI interactions. This feature can be enabled in the Codegen settings UI.
+
+### Breaking Changes
+
+- ⚠️ Dropped support for Chromium extension manifest v2.
+
+### Miscellaneous
+
+- Added support for Debian 13 "Trixie".
+
+### Browser Versions
+
+- Chromium 140.0.7339.16
+- Mozilla Firefox 141.0
+- WebKit 26.0
+
+This version was also tested against the following stable channels:
+
+- Google Chrome 139
+- Microsoft Edge 139
+
 ## Version 1.54
 
 ### Highlights
 
 - New cookie property `partitionKey` in [`method: BrowserContext.cookies`] and [`method: BrowserContext.addCookies`]. This property allows to save and restore partitioned cookies. See [CHIPS MDN article](https://developer.mozilla.org/en-US/docs/Web/Privacy/Guides/Privacy_sandbox/Partitioned_cookies) for more information. Note that browsers have different support and defaults for cookie partitioning.
 
-- New option `noSnippets` to disable snippets in the html report.
+- New option `noSnippets` to disable code snippets in the html report.
   ```js
   import { defineConfig } from '@playwright/test';
 
@@ -39,8 +68,6 @@ import LiteYouTube from '@site/src/components/LiteYouTube';
 - Support for Node.js 16 has been removed.
 
 - Support for Node.js 18 has been deprecated, and will be removed in the future.
-
-- Chromium has been changing WebGL support, based on the available GPU. There is a new flag `--enable-gpu` available in [chromium headless shell](./browsers.md#chromium-headless-shell) that you can try on your hardware.
 
 ### Browser Versions
 
@@ -121,7 +148,6 @@ This version was also tested against the following stable channels:
 ### Miscellaneous
 
 - New option [`option: APIRequest.newContext.maxRedirects`] in [`method: APIRequest.newContext`] to control the maximum number of redirects.
-- New option `ref` in [`method: Locator.ariaSnapshot`] to generate reference for each element in the snapshot which can later be used to locate the element.
 - HTML reporter now supports *NOT filtering* via `!@my-tag` or `!my-file.spec.ts` or `!p:my-project`.
 
 ### Breaking Changes
